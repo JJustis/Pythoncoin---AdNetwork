@@ -2,7 +2,7 @@ Pythoncoin the qt is underdevelopment and I could use all the help you could giv
 
 Pythoncoin is a cryptocoin that each adclient hosts, its used to keep track of clicks by submitting a transfer order live on each click to the db, this is also underconstruction.
 
-The client is there own mint and can write up tos to cover a wide range of scam surfaces and social agreements on the abuse of ad clicking. 
+The client is their own mint and can write up tos to cover a wide range of scam surfaces and social agreements on the abuse of ad clicking. 
 
 In this senario each person who runs a client also owns a website (use noip and port forwarding to get going for free!)
 This website serves that ad networks ads to the world via an adblock generator feature for the webdevelopers, each ad in the network you generate an ad set with has its own payout amounts and settings
