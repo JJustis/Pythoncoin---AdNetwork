@@ -8,7 +8,7 @@ In this senario each person who runs a client also owns a website (use noip and 
 This website serves that ad networks ads to the world via an adblock generator feature for the webdevelopers, each ad in the network you generate an ad set with has its own payout amounts and settings
 
 Now we have to start up an xampp server to host our dashboard at our new noip address, as this is a windows application written in python. With website dashboard for immediate user interactions.
-Navigate to the xampp folder in the C:/ directory and start the server with the start_xampp.exe Now you can goto your noip address and can see the dashboard! You will have to have some knowledge in setting up phpmyadmin or others.
+Navigate to the xampp folder in the C:/ directory and start the server with the start_xampp.exe. find the htdocs folder and add the dashboard8.php to it. Now you can goto your noip address and can see the dashboard! You will have to have some knowledge in setting up phpmyadmin or others.
 Once the mysql, apache, HTTPServer and pythoncoin client are ready and live the netowrk is functional! 
 
 The hook.
