@@ -457,7 +457,7 @@ class DatabaseAutoRegistration:
         
         # Server config
         self.server_config = {
-            'api_url': 'http://localhost/livepy/pythoncoin/api.php'
+            'api_url': 'http://secupgrade.com/livepy/pythoncoin/api.php'
         }
         
         self.db_connection = None
@@ -474,7 +474,7 @@ class DatabaseAutoRegistration:
                 s.connect(("8.8.8.8", 80))
                 return s.getsockname()[0]
         except:
-            return "127.0.0.1"
+            return "secupgrade.com"
     
     def connect_database(self):
         """Connect to MySQL database"""
@@ -647,7 +647,6 @@ import random
 import re
 import qrcode
 from io import BytesIO
-from datetime import datetime, timedelta
 import traceback
 import threading
 import logging
@@ -676,7 +675,12 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                            QStatusBar, QGroupBox, QScrollArea, QFrame,
                            QSpinBox, QRadioButton, QButtonGroup, QListWidget,
                            QMenu, QInputDialog, QAction, QColorDialog)
-
+from datetime import datetime, timedelta
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
+                           QPushButton, QCheckBox, QLabel, QMessageBox, QHeaderView,
+                           QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox, QProgressBar)
+from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtGui import QIcon, QPixmap, QFont, QPalette, QColor, QImage, QClipboard
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QByteArray, QBuffer
 
@@ -2864,6 +2868,1076 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
             # Use ThreadingHTTPServer for better performance
     def handler(*args, **kwargs):
                 return EnhancedPythonCoinHandler(*args, server_instance=self, **kwargs)
+
+#!/usr/bin/env python3
+"""
+Enhanced Ad Click Payment Processor Injection Script
+Fixes MySQL connection issues and implements auto-payment for unprocessed ad clicks
+"""
+
+import sys
+import json
+import time
+import uuid
+import threading
+import mysql.connector
+from datetime import datetime, timedelta
+from PyQt5.QtCore import QTimer, QThread, pyqtSignal, Qt
+from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem, 
+                           QPushButton, QCheckBox, QLabel, QMessageBox, QHeaderView,
+                           QGroupBox, QFormLayout, QDoubleSpinBox, QSpinBox, QProgressBar)
+from PyQt5.QtGui import QColor, QFont
+
+class EnhancedAdClickProcessor(QThread):
+    """Enhanced processor for unprocessed ad clicks with auto-payment"""
+    
+    # Signals for UI updates
+    new_click_detected = pyqtSignal(dict)
+    payment_completed = pyqtSignal(str, float, str)  # click_id, amount, developer_address
+    payment_failed = pyqtSignal(str, str)  # click_id, error_message
+    status_update = pyqtSignal(str)
+    
+    def __init__(self, wallet_instance):
+        super().__init__()
+        self.wallet_instance = wallet_instance
+        self.running = False
+        self.auto_payment_enabled = False
+        self.auto_payment_limit = 0.1  # Max auto-payment amount
+        self.check_interval = 5  # Check every 5 seconds
+        self.processed_clicks = set()  # Track processed clicks to avoid duplicates
+        
+        # Database connection
+        self.db_connection = None
+        self.setup_database_connection()
+        
+    def setup_database_connection(self):
+        """Setup enhanced database connection with retry logic"""
+        try:
+            db_config = {
+                'host': 'localhost',
+                'database': 'adnetwrk',
+                'user': 'root',
+                'password': '',
+                'autocommit': True,
+                'charset': 'utf8mb4',
+                'connection_timeout': 10,
+                'autocommit': True
+            }
+            
+            self.db_connection = mysql.connector.connect(**db_config)
+            
+            # Ensure required tables exist
+            self.ensure_tables_exist()
+            
+            self.status_update.emit("✅ Enhanced database connection established")
+            return True
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Database connection failed: {str(e)}")
+            return False
+    
+    def ensure_tables_exist(self):
+        """Ensure all required tables exist with proper structure"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            # Enhanced ad_clicks table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ad_clicks (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    ad_id VARCHAR(100) NOT NULL,
+                    client_id VARCHAR(100),
+                    developer_address VARCHAR(100) NOT NULL,
+                    developer_name VARCHAR(100),
+                    zone VARCHAR(100) DEFAULT 'default',
+                    payout_amount DECIMAL(16,8) NOT NULL DEFAULT 0.00100000,
+                    click_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ip_address VARCHAR(45),
+                    user_agent TEXT,
+                    processed TINYINT(1) DEFAULT 0,
+                    processed_time TIMESTAMP NULL,
+                    transaction_id VARCHAR(100),
+                    payment_status VARCHAR(20) DEFAULT 'pending',
+                    error_message TEXT,
+                    retry_count INT DEFAULT 0,
+                    INDEX idx_processed (processed),
+                    INDEX idx_click_time (click_time),
+                    INDEX idx_developer (developer_address),
+                    INDEX idx_payment_status (payment_status)
+                )
+            """)
+            
+            # Payment queue table for batch processing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS payment_queue (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    click_id INT NOT NULL,
+                    developer_address VARCHAR(100) NOT NULL,
+                    amount DECIMAL(16,8) NOT NULL,
+                    status VARCHAR(20) DEFAULT 'queued',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    processed_at TIMESTAMP NULL,
+                    transaction_id VARCHAR(100),
+                    error_message TEXT,
+                    FOREIGN KEY (click_id) REFERENCES ad_clicks(id),
+                    INDEX idx_status (status),
+                    INDEX idx_created (created_at)
+                )
+            """)
+            
+            # Developer payment history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS developer_payments (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    developer_address VARCHAR(100) NOT NULL,
+                    developer_name VARCHAR(100),
+                    total_clicks INT DEFAULT 0,
+                    total_earnings DECIMAL(16,8) DEFAULT 0.00000000,
+                    last_payment TIMESTAMP NULL,
+                    last_click TIMESTAMP NULL,
+                    status VARCHAR(20) DEFAULT 'active',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_developer (developer_address),
+                    INDEX idx_developer (developer_address),
+                    INDEX idx_last_payment (last_payment)
+                )
+            """)
+            
+            cursor.close()
+            self.status_update.emit("✅ Database tables verified/created")
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Table creation error: {str(e)}")
+    
+    def run(self):
+        """Main processing loop"""
+        self.running = True
+        self.status_update.emit("🔄 Ad click processor started")
+        
+        while self.running:
+            try:
+                # Check for unprocessed clicks
+                unprocessed_clicks = self.fetch_unprocessed_clicks()
+                
+                if unprocessed_clicks:
+                    self.status_update.emit(f"📨 Found {len(unprocessed_clicks)} unprocessed clicks")
+                    
+                    for click in unprocessed_clicks:
+                        if not self.running:
+                            break
+                        
+                        # Emit signal for UI update
+                        self.new_click_detected.emit(click)
+                        
+                        # Process auto-payments if enabled
+                        if self.auto_payment_enabled:
+                            self.process_auto_payment(click)
+                
+                # Sleep before next check
+                time.sleep(self.check_interval)
+                
+            except Exception as e:
+                self.status_update.emit(f"❌ Processing error: {str(e)}")
+                time.sleep(10)  # Wait longer on error
+    
+    def fetch_unprocessed_clicks(self):
+        """Fetch unprocessed ad clicks from database"""
+        try:
+            if not self.db_connection or not self.db_connection.is_connected():
+                if not self.setup_database_connection():
+                    return []
+            
+            cursor = self.db_connection.cursor(dictionary=True)
+            
+            # Fetch unprocessed clicks with developer info
+            query = """
+                SELECT 
+                    ac.*,
+                    COALESCE(ac.developer_name, CONCAT('Dev_', SUBSTRING(ac.developer_address, 1, 8))) as display_name
+                FROM ad_clicks ac
+                WHERE ac.processed = 0 
+                AND ac.payment_status = 'pending'
+                AND ac.payout_amount > 0
+                ORDER BY ac.click_time ASC
+                LIMIT 100
+            """
+            
+            cursor.execute(query)
+            results = cursor.fetchall()
+            cursor.close()
+            
+            # Filter out already processed clicks to avoid duplicates
+            new_clicks = []
+            for click in results:
+                click_id = click['id']
+                if click_id not in self.processed_clicks:
+                    new_clicks.append(click)
+                    self.processed_clicks.add(click_id)
+            
+            return new_clicks
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error fetching clicks: {str(e)}")
+            return []
+    
+    def process_auto_payment(self, click):
+        """Process automatic payment for eligible clicks"""
+        try:
+            click_id = click['id']
+            amount = float(click['payout_amount'])
+            developer_address = click['developer_address']
+            
+            # Check if eligible for auto-payment
+            if amount <= self.auto_payment_limit:
+                success = self.execute_payment(click)
+                
+                if success:
+                    self.payment_completed.emit(str(click_id), amount, developer_address)
+                else:
+                    self.payment_failed.emit(str(click_id), "Auto-payment failed")
+            else:
+                self.status_update.emit(f"💰 Click {click_id} requires manual approval (${amount:.6f} > ${self.auto_payment_limit:.6f})")
+                
+        except Exception as e:
+            self.status_update.emit(f"❌ Auto-payment error: {str(e)}")
+    
+    def execute_payment(self, click):
+        """Execute payment to developer"""
+        try:
+            click_id = click['id']
+            amount = float(click['payout_amount'])
+            developer_address = click['developer_address']
+            
+            # Check wallet balance
+            if not self.wallet_instance.wallet:
+                self.update_click_status(click_id, 'failed', 'No wallet available')
+                return False
+            
+            try:
+                current_balance = self.wallet_instance.get_current_balance()
+            except:
+                current_balance = 0.0
+            
+            if current_balance < amount:
+                self.update_click_status(click_id, 'failed', f'Insufficient balance: {current_balance:.8f} < {amount:.8f}')
+                return False
+            
+            # Execute transaction
+            tx = self.wallet_instance.wallet.send(developer_address, amount)
+            
+            if tx:
+                # Update database
+                self.update_click_status(click_id, 'completed', transaction_id=tx.tx_id)
+                self.update_developer_stats(developer_address, amount)
+                
+                self.status_update.emit(f"💰 Payment sent: {amount:.6f} PYC to {developer_address[:8]}...")
+                
+                # Save blockchain state
+                if hasattr(self.wallet_instance, 'save_blockchain'):
+                    self.wallet_instance.save_blockchain()
+                
+                return True
+            else:
+                self.update_click_status(click_id, 'failed', 'Transaction creation failed')
+                return False
+                
+        except Exception as e:
+            self.update_click_status(click_id, 'failed', str(e))
+            return False
+    
+    def update_click_status(self, click_id, status, error_message=None, transaction_id=None):
+        """Update click processing status in database"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            if status == 'completed':
+                query = """
+                    UPDATE ad_clicks 
+                    SET processed = 1, 
+                        processed_time = NOW(), 
+                        payment_status = %s,
+                        transaction_id = %s
+                    WHERE id = %s
+                """
+                cursor.execute(query, (status, transaction_id, click_id))
+            else:
+                query = """
+                    UPDATE ad_clicks 
+                    SET payment_status = %s,
+                        error_message = %s,
+                        retry_count = retry_count + 1
+                    WHERE id = %s
+                """
+                cursor.execute(query, (status, error_message, click_id))
+            
+            cursor.close()
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error updating click status: {str(e)}")
+    
+    def update_developer_stats(self, developer_address, amount):
+        """Update developer payment statistics"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            query = """
+                INSERT INTO developer_payments 
+                (developer_address, total_clicks, total_earnings, last_payment, last_click)
+                VALUES (%s, 1, %s, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                total_clicks = total_clicks + 1,
+                total_earnings = total_earnings + %s,
+                last_payment = NOW(),
+                last_click = NOW(),
+                updated_at = NOW()
+            """
+            
+            cursor.execute(query, (developer_address, amount, amount))
+            cursor.close()
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error updating developer stats: {str(e)}")
+    
+    def manual_process_click(self, click_id):
+        """Manually process a specific click"""
+        try:
+            cursor = self.db_connection.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM ad_clicks WHERE id = %s", (click_id,))
+            click = cursor.fetchone()
+            cursor.close()
+            
+            if click:
+                success = self.execute_payment(click)
+                return success
+            else:
+                return False
+                
+        except Exception as e:
+            self.status_update.emit(f"❌ Manual processing error: {str(e)}")
+            return False
+    
+    def set_auto_payment_enabled(self, enabled):
+        """Enable/disable auto-payment"""
+        self.auto_payment_enabled = enabled
+        self.status_update.emit(f"🤖 Auto-payment {'enabled' if enabled else 'disabled'}")
+    
+    def set_auto_payment_limit(self, limit):
+        """Set auto-payment limit"""
+        self.auto_payment_limit = limit
+        self.status_update.emit(f"💰 Auto-payment limit set to {limit:.6f} PYC")
+    
+    def stop(self):
+        """Stop the processor"""
+        self.running = False
+        if self.db_connection:
+            self.db_connection.close()
+class EnhancedAdClickProcessor(QThread):
+    """Enhanced processor for unprocessed ad clicks with auto-payment"""
+    
+    # Signals for UI updates
+    new_click_detected = pyqtSignal(dict)
+    payment_completed = pyqtSignal(str, float, str)  # click_id, amount, developer_address
+    payment_failed = pyqtSignal(str, str)  # click_id, error_message
+    status_update = pyqtSignal(str)
+    
+    def __init__(self, wallet_instance):
+        super().__init__()
+        self.wallet_instance = wallet_instance
+        self.running = False
+        self.auto_payment_enabled = False
+        self.auto_payment_limit = 0.1  # Max auto-payment amount
+        self.check_interval = 5  # Check every 5 seconds
+        self.processed_clicks = set()  # Track processed clicks to avoid duplicates
+        
+        # Database connection
+        self.db_connection = None
+        self.setup_database_connection()
+        
+    def setup_database_connection(self):
+        """Setup enhanced database connection with retry logic"""
+        try:
+            db_config = {
+                'host': 'localhost',
+                'database': 'adnetwrk',
+                'user': 'root',
+                'password': '',
+                'autocommit': True,
+                'charset': 'utf8mb4',
+                'connection_timeout': 10,
+                'autocommit': True
+            }
+            
+            self.db_connection = mysql.connector.connect(**db_config)
+            
+            # Ensure required tables exist
+            self.ensure_tables_exist()
+            
+            self.status_update.emit("✅ Enhanced database connection established")
+            return True
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Database connection failed: {str(e)}")
+            return False
+    
+    def ensure_tables_exist(self):
+        """Ensure all required tables exist with proper structure"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            # Enhanced ad_clicks table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ad_clicks (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    ad_id VARCHAR(100) NOT NULL,
+                    client_id VARCHAR(100),
+                    developer_address VARCHAR(100) NOT NULL,
+                    developer_name VARCHAR(100),
+                    zone VARCHAR(100) DEFAULT 'default',
+                    payout_amount DECIMAL(16,8) NOT NULL DEFAULT 0.00100000,
+                    click_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    ip_address VARCHAR(45),
+                    user_agent TEXT,
+                    processed TINYINT(1) DEFAULT 0,
+                    processed_time TIMESTAMP NULL,
+                    transaction_id VARCHAR(100),
+                    payment_status VARCHAR(20) DEFAULT 'pending',
+                    error_message TEXT,
+                    retry_count INT DEFAULT 0,
+                    INDEX idx_processed (processed),
+                    INDEX idx_click_time (click_time),
+                    INDEX idx_developer (developer_address),
+                    INDEX idx_payment_status (payment_status)
+                )
+            """)
+            
+            # Payment queue table for batch processing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS payment_queue (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    click_id INT NOT NULL,
+                    developer_address VARCHAR(100) NOT NULL,
+                    amount DECIMAL(16,8) NOT NULL,
+                    status VARCHAR(20) DEFAULT 'queued',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    processed_at TIMESTAMP NULL,
+                    transaction_id VARCHAR(100),
+                    error_message TEXT,
+                    FOREIGN KEY (click_id) REFERENCES ad_clicks(id),
+                    INDEX idx_status (status),
+                    INDEX idx_created (created_at)
+                )
+            """)
+            
+            # Developer payment history
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS developer_payments (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    developer_address VARCHAR(100) NOT NULL,
+                    developer_name VARCHAR(100),
+                    total_clicks INT DEFAULT 0,
+                    total_earnings DECIMAL(16,8) DEFAULT 0.00000000,
+                    last_payment TIMESTAMP NULL,
+                    last_click TIMESTAMP NULL,
+                    status VARCHAR(20) DEFAULT 'active',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY unique_developer (developer_address),
+                    INDEX idx_developer (developer_address),
+                    INDEX idx_last_payment (last_payment)
+                )
+            """)
+            
+            cursor.close()
+            self.status_update.emit("✅ Database tables verified/created")
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Table creation error: {str(e)}")
+    
+    def run(self):
+        """Main processing loop"""
+        self.running = True
+        self.status_update.emit("🔄 Ad click processor started")
+        
+        while self.running:
+            try:
+                # Check for unprocessed clicks
+                unprocessed_clicks = self.fetch_unprocessed_clicks()
+                
+                if unprocessed_clicks:
+                    self.status_update.emit(f"📨 Found {len(unprocessed_clicks)} unprocessed clicks")
+                    
+                    for click in unprocessed_clicks:
+                        if not self.running:
+                            break
+                        
+                        # Emit signal for UI update
+                        self.new_click_detected.emit(click)
+                        
+                        # Process auto-payments if enabled
+                        if self.auto_payment_enabled:
+                            self.process_auto_payment(click)
+                
+                # Sleep before next check
+                time.sleep(self.check_interval)
+                
+            except Exception as e:
+                self.status_update.emit(f"❌ Processing error: {str(e)}")
+                time.sleep(10)  # Wait longer on error
+    
+    def fetch_unprocessed_clicks(self):
+        """Fetch unprocessed ad clicks from database"""
+        try:
+            if not self.db_connection or not self.db_connection.is_connected():
+                if not self.setup_database_connection():
+                    return []
+            
+            cursor = self.db_connection.cursor(dictionary=True)
+            
+            # Fetch unprocessed clicks with developer info
+            query = """
+                SELECT 
+                    ac.*,
+                    COALESCE(ac.developer_name, CONCAT('Dev_', SUBSTRING(ac.developer_address, 1, 8))) as display_name
+                FROM ad_clicks ac
+                WHERE ac.processed = 0 
+                AND ac.payment_status = 'pending'
+                AND ac.payout_amount > 0
+                ORDER BY ac.click_time ASC
+                LIMIT 100
+            """
+            
+            cursor.execute(query)
+            results = cursor.fetchall()
+            cursor.close()
+            
+            # Filter out already processed clicks to avoid duplicates
+            new_clicks = []
+            for click in results:
+                click_id = click['id']
+                if click_id not in self.processed_clicks:
+                    new_clicks.append(click)
+                    self.processed_clicks.add(click_id)
+            
+            return new_clicks
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error fetching clicks: {str(e)}")
+            return []
+    
+    def process_auto_payment(self, click):
+        """Process automatic payment for eligible clicks"""
+        try:
+            click_id = click['id']
+            amount = float(click['payout_amount'])
+            developer_address = click['developer_address']
+            
+            # Check if eligible for auto-payment
+            if amount <= self.auto_payment_limit:
+                success = self.execute_payment(click)
+                
+                if success:
+                    self.payment_completed.emit(str(click_id), amount, developer_address)
+                else:
+                    self.payment_failed.emit(str(click_id), "Auto-payment failed")
+            else:
+                self.status_update.emit(f"💰 Click {click_id} requires manual approval (${amount:.6f} > ${self.auto_payment_limit:.6f})")
+                
+        except Exception as e:
+            self.status_update.emit(f"❌ Auto-payment error: {str(e)}")
+    
+    def execute_payment(self, click):
+        """Execute payment to developer"""
+        try:
+            click_id = click['id']
+            amount = float(click['payout_amount'])
+            developer_address = click['developer_address']
+            
+            # Check wallet balance
+            if not self.wallet_instance.wallet:
+                self.update_click_status(click_id, 'failed', 'No wallet available')
+                return False
+            
+            try:
+                current_balance = self.wallet_instance.get_current_balance()
+            except:
+                current_balance = 0.0
+            
+            if current_balance < amount:
+                self.update_click_status(click_id, 'failed', f'Insufficient balance: {current_balance:.8f} < {amount:.8f}')
+                return False
+            
+            # Execute transaction
+            tx = self.wallet_instance.wallet.send(developer_address, amount)
+            
+            if tx:
+                # Update database
+                self.update_click_status(click_id, 'completed', transaction_id=tx.tx_id)
+                self.update_developer_stats(developer_address, amount)
+                
+                self.status_update.emit(f"💰 Payment sent: {amount:.6f} PYC to {developer_address[:8]}...")
+                
+                # Save blockchain state
+                if hasattr(self.wallet_instance, 'save_blockchain'):
+                    self.wallet_instance.save_blockchain()
+                
+                return True
+            else:
+                self.update_click_status(click_id, 'failed', 'Transaction creation failed')
+                return False
+                
+        except Exception as e:
+            self.update_click_status(click_id, 'failed', str(e))
+            return False
+    
+    def update_click_status(self, click_id, status, error_message=None, transaction_id=None):
+        """Update click processing status in database"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            if status == 'completed':
+                query = """
+                    UPDATE ad_clicks 
+                    SET processed = 1, 
+                        processed_time = NOW(), 
+                        payment_status = %s,
+                        transaction_id = %s
+                    WHERE id = %s
+                """
+                cursor.execute(query, (status, transaction_id, click_id))
+            else:
+                query = """
+                    UPDATE ad_clicks 
+                    SET payment_status = %s,
+                        error_message = %s,
+                        retry_count = retry_count + 1
+                    WHERE id = %s
+                """
+                cursor.execute(query, (status, error_message, click_id))
+            
+            cursor.close()
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error updating click status: {str(e)}")
+    
+    def update_developer_stats(self, developer_address, amount):
+        """Update developer payment statistics"""
+        try:
+            cursor = self.db_connection.cursor()
+            
+            query = """
+                INSERT INTO developer_payments 
+                (developer_address, total_clicks, total_earnings, last_payment, last_click)
+                VALUES (%s, 1, %s, NOW(), NOW())
+                ON DUPLICATE KEY UPDATE
+                total_clicks = total_clicks + 1,
+                total_earnings = total_earnings + %s,
+                last_payment = NOW(),
+                last_click = NOW(),
+                updated_at = NOW()
+            """
+            
+            cursor.execute(query, (developer_address, amount, amount))
+            cursor.close()
+            
+        except Exception as e:
+            self.status_update.emit(f"❌ Error updating developer stats: {str(e)}")
+    
+    def manual_process_click(self, click_id):
+        """Manually process a specific click"""
+        try:
+            cursor = self.db_connection.cursor(dictionary=True)
+            cursor.execute("SELECT * FROM ad_clicks WHERE id = %s", (click_id,))
+            click = cursor.fetchone()
+            cursor.close()
+            
+            if click:
+                success = self.execute_payment(click)
+                return success
+            else:
+                return False
+                
+        except Exception as e:
+            self.status_update.emit(f"❌ Manual processing error: {str(e)}")
+            return False
+    
+    def set_auto_payment_enabled(self, enabled):
+        """Enable/disable auto-payment"""
+        self.auto_payment_enabled = enabled
+        self.status_update.emit(f"🤖 Auto-payment {'enabled' if enabled else 'disabled'}")
+    
+    def set_auto_payment_limit(self, limit):
+        """Set auto-payment limit"""
+        self.auto_payment_limit = limit
+        self.status_update.emit(f"💰 Auto-payment limit set to {limit:.6f} PYC")
+    
+    def stop(self):
+        """Stop the processor"""
+        self.running = False
+        if self.db_connection:
+            self.db_connection.close()
+class EnhancedPaymentTab:
+    """Enhanced payment tab with unprocessed ad clicks integration"""
+    
+    def __init__(self, wallet_instance):
+        self.wallet_instance = wallet_instance
+        self.click_processor = None
+        self.setup_enhanced_payment_tab()
+        self.start_click_processor()
+    
+    def setup_enhanced_payment_tab(self):
+        """Setup the enhanced payment tab UI"""
+        try:
+            # Find existing payment tab or create new one
+            payment_tab = None
+            for i in range(self.wallet_instance.tab_widget.count()):
+                if "Payment" in self.wallet_instance.tab_widget.tabText(i):
+                    payment_tab = self.wallet_instance.tab_widget.widget(i)
+                    break
+            
+            if not payment_tab:
+                self.create_new_payment_tab()
+            else:
+                self.enhance_existing_payment_tab(payment_tab)
+                
+        except Exception as e:
+            print(f"Error setting up enhanced payment tab: {e}")
+    
+    def create_new_payment_tab(self):
+        """Create new enhanced payment tab"""
+        from PyQt5.QtWidgets import QWidget
+        
+        payment_widget = QWidget()
+        layout = QVBoxLayout()
+        payment_widget.setLayout(layout)
+        
+        # Add enhanced payment controls
+        self.add_payment_controls(layout)
+        
+        # Add to tab widget
+        self.wallet_instance.tab_widget.addTab(payment_widget, "💰 Enhanced Payments")
+    
+    def enhance_existing_payment_tab(self, payment_tab):
+        """Enhance existing payment tab"""
+        layout = payment_tab.layout()
+        if layout:
+            # Add enhanced controls to existing layout
+            self.add_payment_controls(layout)
+    
+    def add_payment_controls(self, layout):
+        """Add enhanced payment controls to layout"""
+        
+        # Status and controls group
+        status_group = QGroupBox("🔄 Ad Click Payment Processor")
+        status_layout = QVBoxLayout()
+        
+        # Status label
+        self.processor_status = QLabel("Status: Initializing...")
+        self.processor_status.setFont(QFont('Arial', 12, QFont.Weight.Bold))
+        status_layout.addWidget(self.processor_status)
+        
+        # Auto-payment controls
+        auto_controls = QHBoxLayout()
+        
+        self.auto_payment_checkbox = QCheckBox("Enable Auto-Payment")
+        self.auto_payment_checkbox.stateChanged.connect(self.toggle_auto_payment)
+        auto_controls.addWidget(self.auto_payment_checkbox)
+        
+        auto_controls.addWidget(QLabel("Max Amount:"))
+        
+        self.auto_limit_spinbox = QDoubleSpinBox()
+        self.auto_limit_spinbox.setDecimals(6)
+        self.auto_limit_spinbox.setRange(0.000001, 1.0)
+        self.auto_limit_spinbox.setValue(0.1)
+        self.auto_limit_spinbox.valueChanged.connect(self.update_auto_limit)
+        auto_controls.addWidget(self.auto_limit_spinbox)
+        
+        auto_controls.addWidget(QLabel("PYC"))
+        auto_controls.addStretch()
+        
+        status_layout.addLayout(auto_controls)
+        status_group.setLayout(status_layout)
+        layout.addWidget(status_group)
+        
+        # Unprocessed clicks table
+        clicks_group = QGroupBox("📨 Unprocessed Ad Clicks")
+        clicks_layout = QVBoxLayout()
+        
+        # Table for unprocessed clicks
+        self.clicks_table = QTableWidget()
+        self.clicks_table.setColumnCount(8)
+        self.clicks_table.setHorizontalHeaderLabels([
+            "ID", "Developer", "Amount", "Time", "Ad ID", "Zone", "Status", "Action"
+        ])
+        
+        # Configure table
+        header = self.clicks_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.clicks_table.setAlternatingRowColors(True)
+        self.clicks_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        
+        clicks_layout.addWidget(self.clicks_table)
+        
+        # Batch processing controls
+        batch_controls = QHBoxLayout()
+        
+        self.select_all_btn = QPushButton("☑️ Select All")
+        self.select_all_btn.clicked.connect(self.select_all_clicks)
+        batch_controls.addWidget(self.select_all_btn)
+        
+        self.process_selected_btn = QPushButton("💸 Process Selected")
+        self.process_selected_btn.clicked.connect(self.process_selected_clicks)
+        self.process_selected_btn.setStyleSheet("background-color: #28a745; color: white; font-weight: bold;")
+        batch_controls.addWidget(self.process_selected_btn)
+        
+        self.refresh_btn = QPushButton("🔄 Refresh")
+        self.refresh_btn.clicked.connect(self.refresh_clicks_table)
+        batch_controls.addWidget(self.refresh_btn)
+        
+        batch_controls.addStretch()
+        
+        # Statistics
+        self.stats_label = QLabel("Processed: 0 | Pending: 0 | Total Paid: 0.000000 PYC")
+        batch_controls.addWidget(self.stats_label)
+        
+        clicks_layout.addLayout(batch_controls)
+        clicks_group.setLayout(clicks_layout)
+        layout.addWidget(clicks_group)
+    
+    def start_click_processor(self):
+        """Start the click processor thread"""
+        try:
+            self.click_processor = EnhancedAdClickProcessor(self.wallet_instance)
+            
+            # Connect signals
+            self.click_processor.new_click_detected.connect(self.add_click_to_table)
+            self.click_processor.payment_completed.connect(self.on_payment_completed)
+            self.click_processor.payment_failed.connect(self.on_payment_failed)
+            self.click_processor.status_update.connect(self.update_status)
+            
+            # Start processor
+            self.click_processor.start()
+            
+        except Exception as e:
+            print(f"Error starting click processor: {e}")
+    
+    def add_click_to_table(self, click):
+        """Add new click to the table"""
+        try:
+            row = self.clicks_table.rowCount()
+            self.clicks_table.insertRow(row)
+            
+            # ID
+            id_item = QTableWidgetItem(str(click['id']))
+            self.clicks_table.setItem(row, 0, id_item)
+            
+            # Developer
+            dev_name = click.get('display_name', click['developer_address'][:8] + '...')
+            dev_item = QTableWidgetItem(dev_name)
+            dev_item.setToolTip(click['developer_address'])
+            self.clicks_table.setItem(row, 1, dev_item)
+            
+            # Amount
+            amount_item = QTableWidgetItem(f"{click['payout_amount']:.6f} PYC")
+            amount_item.setTextAlignment(Qt.AlignmentFlag.AlignRight)
+            if float(click['payout_amount']) <= self.auto_limit_spinbox.value():
+                amount_item.setForeground(QColor(40, 167, 69))  # Green for auto-eligible
+            else:
+                amount_item.setForeground(QColor(220, 53, 69))  # Red for manual
+            self.clicks_table.setItem(row, 2, amount_item)
+            
+            # Time
+            time_item = QTableWidgetItem(str(click['click_time']))
+            self.clicks_table.setItem(row, 3, time_item)
+            
+            # Ad ID
+            ad_item = QTableWidgetItem(str(click['ad_id'])[:8] + '...')
+            ad_item.setToolTip(str(click['ad_id']))
+            self.clicks_table.setItem(row, 4, ad_item)
+            
+            # Zone
+            zone_item = QTableWidgetItem(str(click.get('zone', 'default')))
+            self.clicks_table.setItem(row, 5, zone_item)
+            
+            # Status
+            status_item = QTableWidgetItem(click.get('payment_status', 'pending'))
+            self.clicks_table.setItem(row, 6, status_item)
+            
+            # Action button
+            pay_btn = QPushButton("💰 Pay Now")
+            pay_btn.clicked.connect(lambda: self.manual_pay_click(click['id']))
+            pay_btn.setStyleSheet("background-color: #007bff; color: white;")
+            self.clicks_table.setCellWidget(row, 7, pay_btn)
+            
+            # Update statistics
+            self.update_statistics()
+            
+        except Exception as e:
+            print(f"Error adding click to table: {e}")
+    
+    def manual_pay_click(self, click_id):
+        """Manually process a specific click"""
+        try:
+            if self.click_processor:
+                success = self.click_processor.manual_process_click(click_id)
+                if success:
+                    self.update_status(f"✅ Manual payment for click {click_id} completed")
+                    self.refresh_clicks_table()
+                else:
+                    self.update_status(f"❌ Manual payment for click {click_id} failed")
+            
+        except Exception as e:
+            self.update_status(f"❌ Manual payment error: {str(e)}")
+    
+    def toggle_auto_payment(self, state):
+        """Toggle auto-payment on/off"""
+        enabled = state == 2  # Qt.Checked
+        if self.click_processor:
+            self.click_processor.set_auto_payment_enabled(enabled)
+    
+    def update_auto_limit(self, value):
+        """Update auto-payment limit"""
+        if self.click_processor:
+            self.click_processor.set_auto_payment_limit(value)
+    
+    def select_all_clicks(self):
+        """Select all rows in the table"""
+        self.clicks_table.selectAll()
+    
+    def process_selected_clicks(self):
+        """Process all selected clicks"""
+        try:
+            selected_rows = set()
+            for item in self.clicks_table.selectedItems():
+                selected_rows.add(item.row())
+            
+            if not selected_rows:
+                QMessageBox.warning(None, "No Selection", "Please select clicks to process")
+                return
+            
+            # Confirm processing
+            reply = QMessageBox.question(None, "Confirm Processing", 
+                                       f"Process {len(selected_rows)} selected clicks?",
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                processed_count = 0
+                for row in selected_rows:
+                    click_id_item = self.clicks_table.item(row, 0)
+                    if click_id_item:
+                        click_id = int(click_id_item.text())
+                        if self.click_processor.manual_process_click(click_id):
+                            processed_count += 1
+                
+                self.update_status(f"✅ Processed {processed_count}/{len(selected_rows)} selected clicks")
+                self.refresh_clicks_table()
+            
+        except Exception as e:
+            self.update_status(f"❌ Batch processing error: {str(e)}")
+    
+    def refresh_clicks_table(self):
+        """Refresh the clicks table"""
+        try:
+            # Clear existing rows
+            self.clicks_table.setRowCount(0)
+            
+            # Reload data
+            if self.click_processor:
+                unprocessed = self.click_processor.fetch_unprocessed_clicks()
+                for click in unprocessed:
+                    self.add_click_to_table(click)
+            
+        except Exception as e:
+            print(f"Error refreshing table: {e}")
+    
+    def update_statistics(self):
+        """Update statistics display"""
+        try:
+            # Get statistics from database
+            if self.click_processor and self.click_processor.db_connection:
+                cursor = self.click_processor.db_connection.cursor()
+                
+                # Count processed vs pending
+                cursor.execute("SELECT COUNT(*) FROM ad_clicks WHERE processed = 1")
+                processed_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM ad_clicks WHERE processed = 0")
+                pending_count = cursor.fetchone()[0]
+                
+                # Total paid amount
+                cursor.execute("SELECT COALESCE(SUM(payout_amount), 0) FROM ad_clicks WHERE processed = 1")
+                total_paid = cursor.fetchone()[0]
+                
+                cursor.close()
+                
+                self.stats_label.setText(
+                    f"Processed: {processed_count} | Pending: {pending_count} | Total Paid: {total_paid:.6f} PYC"
+                )
+            
+        except Exception as e:
+            print(f"Error updating statistics: {e}")
+    
+    def update_status(self, message):
+        """Update status display"""
+        if hasattr(self, 'processor_status'):
+            self.processor_status.setText(f"Status: {message}")
+    
+    def on_payment_completed(self, click_id, amount, developer_address):
+        """Handle payment completion"""
+        self.update_status(f"✅ Payment completed: {amount:.6f} PYC to {developer_address[:8]}...")
+        self.refresh_clicks_table()
+    
+    def on_payment_failed(self, click_id, error_message):
+        """Handle payment failure"""
+        self.update_status(f"❌ Payment failed for click {click_id}: {error_message}")
+
+def inject_enhanced_payment_system(wallet_instance):
+    """Main injection function to enhance the payment system"""
+    try:
+        print("🔄 Injecting enhanced ad click payment system...")
+        
+        # Add enhanced payment tab
+        enhanced_payment_tab = EnhancedPaymentTab(wallet_instance)
+        
+        # Add method to wallet instance for external access
+        wallet_instance.enhanced_payment_processor = enhanced_payment_tab.click_processor
+        
+        # Add convenience methods
+        def get_payment_statistics():
+            """Get payment processing statistics"""
+            try:
+                if hasattr(wallet_instance, 'enhanced_payment_processor') and wallet_instance.enhanced_payment_processor:
+                    processor = wallet_instance.enhanced_payment_processor
+                    if processor.db_connection:
+                        cursor = processor.db_connection.cursor(dictionary=True)
+                        
+                        cursor.execute("""
+                            SELECT 
+                                COUNT(*) as total_clicks,
+                                SUM(CASE WHEN processed = 1 THEN 1 ELSE 0 END) as processed_clicks,
+                                SUM(CASE WHEN processed = 0 THEN 1 ELSE 0 END) as pending_clicks,
+                                COALESCE(SUM(CASE WHEN processed = 1 THEN payout_amount ELSE 0 END), 0) as total_paid
+                            FROM ad_clicks
+                        """)
+                        
+                        stats = cursor.fetchone()
+                        cursor.close()
+                        return stats
+                return {}
+            except Exception as e:
+                print(f"Error getting payment stats: {e}")
+                return {}
+        
+        wallet_instance.get_payment_statistics = get_payment_statistics
+        
+        print("✅ Enhanced ad click payment system injected successfully!")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Injection failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
             
             # Optimize server settings
 class OptimizedServer(ThreadingHTTPServer):
@@ -4479,7 +5553,156 @@ class AdStorageManager:
         }
         
         for placeholder, value in replacements.items():
-            template = template.replace(placeholder, str(value))
+                    # Enhanced SVG template with image support
+            svg_template = """<svg width="400" height="280" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <defs>
+        <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#ffffff"/>
+            <stop offset="50%" style="stop-color:#f8fffe"/>
+            <stop offset="100%" style="stop-color:#f0f9ff"/>
+        </linearGradient>
+        <linearGradient id="badgeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" style="stop-color:#ff6b35"/>
+            <stop offset="100%" style="stop-color:#f7931e"/>
+        </linearGradient>
+        <linearGradient id="payoutGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" style="stop-color:#28a745"/>
+            <stop offset="100%" style="stop-color:#20c997"/>
+        </linearGradient>
+        <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+            <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#0066cc" flood-opacity="0.15"/>
+        </filter>
+        <pattern id="bgImage" patternUnits="userSpaceOnUse" width="400" height="280">
+            <rect width="400" height="280" fill="url(#bgGrad)"/>
+            {{#AD_IMAGE_URL}}
+            <image href="{{AD_IMAGE_URL}}" x="0" y="0" width="400" height="280" opacity="0.3" preserveAspectRatio="xMidYMid slice"/>
+            {{/AD_IMAGE_URL}}
+        </pattern>
+    </defs>
+    
+    <!-- Main container with image background -->
+    <rect x="8" y="8" width="384" height="264" rx="16" ry="16" 
+          fill="url(#bgImage)" stroke="#0066cc" stroke-width="2" filter="url(#shadow)">
+        <animate attributeName="stroke-width" values="2;3;2" dur="3s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- Semi-transparent overlay for text readability -->
+    <rect x="8" y="8" width="384" height="264" rx="16" ry="16" 
+          fill="rgba(255,255,255,0.85)" stroke="none"/>
+    
+    <!-- Animated top border -->
+    <rect x="8" y="8" width="384" height="4" rx="2" ry="2">
+        <animate attributeName="fill" values="#ff6b35;#f7931e;#0066cc;#28a745;#ff6b35" dur="5s" repeatCount="indefinite"/>
+    </rect>
+    
+    <!-- Badge -->
+    <rect x="300" y="20" width="85" height="28" rx="14" ry="14" fill="url(#badgeGrad)"/>
+    <text x="342" y="37" text-anchor="middle" fill="white" font-family="Arial, sans-serif" 
+          font-size="11" font-weight="bold">💎 PYC</text>
+    
+    <!-- Title with background for readability -->
+    <rect x="20" y="45" width="360" height="25" rx="4" ry="4" fill="rgba(255,255,255,0.9)"/>
+    <text x="24" y="62" fill="#0066cc" font-family="Arial, sans-serif" font-size="22" font-weight="bold">
+        {{AD_TITLE}}
+    </text>
+    
+    <!-- Description with background -->
+    <rect x="20" y="75" width="360" height="80" rx="4" ry="4" fill="rgba(255,255,255,0.9)"/>
+    <foreignObject x="24" y="80" width="350" height="70">
+        <div xmlns="http://www.w3.org/1999/xhtml" 
+             style="color: #374151; font-family: Arial, sans-serif; font-size: 16px; line-height: 1.6; padding: 5px;">
+            {{AD_DESCRIPTION}}
+        </div>
+    </foreignObject>
+    
+    <!-- Category -->
+    <rect x="20" y="190" width="250" height="20" rx="4" ry="4" fill="rgba(255,255,255,0.9)"/>
+    <text x="24" y="203" fill="#0066cc" font-family="Arial, sans-serif" 
+          font-size="14" font-weight="600">📱 {{AD_CATEGORY}} • 🌐 P2P Network</text>
+    
+    <!-- Payout button with hover effect -->
+    <g id="payoutButton">
+        <rect x="280" y="180" width="110" height="35" rx="17" ry="17" fill="url(#payoutGrad)" filter="url(#shadow)">
+            <animate attributeName="y" values="180;178;180" dur="2s" repeatCount="indefinite"/>
+        </rect>
+        <text x="335" y="200" text-anchor="middle" fill="white" font-family="Arial, sans-serif" 
+              font-size="13" font-weight="bold">+{{AD_PAYOUT}} PYC</text>
+    </g>
+    
+    <!-- Stats -->
+    <rect x="20" y="240" width="120" height="24" rx="12" ry="12" 
+          fill="rgba(0,102,204,0.9)" stroke="rgba(0,102,204,0.3)" stroke-width="1"/>
+    <text x="80" y="254" text-anchor="middle" fill="white" font-family="Arial, sans-serif" 
+          font-size="10" font-weight="600">ID: {{AD_ID_SHORT}}</text>
+    
+    <!-- Click area -->
+    <rect x="0" y="0" width="400" height="280" fill="transparent" style="cursor: pointer"
+          onclick="handleAdClick('{{AD_ID}}')"/>
+    
+    <script type="application/ecmascript"><![CDATA[
+        function handleAdClick(adId) {
+            if (window.pythonCoinWallet) {
+                window.pythonCoinWallet.recordClick(adId);
+            }
+            
+            const clickUrl = '{{AD_CLICK_URL}}';
+            if (clickUrl && clickUrl !== '#') {
+                window.open(clickUrl, '_blank');
+            }
+        }
+    ]]></script>
+</svg>"""
+        
+        # Prepare image handling
+        image_url = metadata.get('image_url', '')
+        
+        # Convert local file paths to data URLs for embedding
+        if image_url and image_url.startswith('file://'):
+            try:
+                import base64
+                from pathlib import Path
+                
+                file_path = image_url.replace('file://', '')
+                if Path(file_path).exists():
+                    with open(file_path, 'rb') as img_file:
+                        img_data = base64.b64encode(img_file.read()).decode()
+                        file_ext = Path(file_path).suffix.lower()
+                        
+                        # Determine MIME type
+                        mime_types = {
+                            '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+                            '.png': 'image/png', '.gif': 'image/gif',
+                            '.webp': 'image/webp', '.svg': 'image/svg+xml'
+                        }
+                        mime_type = mime_types.get(file_ext, 'image/png')
+                        
+                        # Create data URL
+                        image_url = f"data:{mime_type};base64,{img_data}"
+                else:
+                    image_url = ""  # File not found
+            except Exception as e:
+                print(f"Error processing image: {e}")
+                image_url = ""
+        
+        # Enhanced replacements with image support
+        replacements = {
+            '{{AD_ID}}': metadata['id'],
+            '{{AD_ID_SHORT}}': metadata['id'][:8],
+            '{{AD_TITLE}}': metadata['title'][:30] + ('...' if len(metadata['title']) > 30 else ''),
+            '{{AD_DESCRIPTION}}': metadata['description'][:100] + ('...' if len(metadata['description']) > 100 else ''),
+            '{{AD_CATEGORY}}': metadata['category'].title(),
+            '{{AD_CLICK_URL}}': metadata['click_url'],
+            '{{AD_PAYOUT}}': f"{metadata['payout_rate']:.8f}",
+            '{{AD_IMAGE_URL}}': image_url,
+            '{{#AD_IMAGE_URL}}': '' if image_url else '<!--',
+            '{{/AD_IMAGE_URL}}': '' if image_url else '-->'
+        }
+        
+        # Apply replacements
+        for placeholder, value in replacements.items():
+            svg_template = svg_template.replace(placeholder, str(value))
+        
+        return svg_template
         
         return template
     
@@ -4916,7 +6139,56 @@ class UnifiedPythonCoinWallet(QMainWindow):
         
         # Initialize enhanced ad system
         QTimer.singleShot(3000, self.initialize_enhanced_ad_system)
-
+    def start_node(self):
+        """Start blockchain node - wrapper for enhanced version"""
+        try:
+            # Call the enhanced node server method if it exists
+            if hasattr(self, 'start_enhanced_node_server'):
+                self.start_enhanced_node_server()
+            else:
+                # Fallback to original implementation
+                if self.node:
+                    return
+                
+                host = "0.0.0.0"
+                port = 5000
+                
+                if hasattr(self, 'node_host') and self.node_host:
+                    host_text = self.node_host.text().strip()
+                    if host_text:
+                        host = host_text
+                
+                if hasattr(self, 'node_port') and self.node_port:
+                    try:
+                        port = self.get_safe_port_from_ui(self.node_port, 5000)
+                    except:
+                        port = 5000
+                
+                self.log_message(f"🚀 Starting node on {host}:{port}")
+                
+                # Create enhanced node
+                self.node = EnhancedPythonCoinNode(
+                    host=host, 
+                    port=port, 
+                    blockchain=self.blockchain, 
+                    wallet=self.wallet,
+                    main_wallet_instance=self
+                )
+                
+                # Start node in thread
+                threading.Thread(target=self.node.start, daemon=True).start()
+                
+                if hasattr(self, 'node_status'):
+                    self.node_status.setText(f"Status: Enhanced node running on {host}:{port}")
+                if hasattr(self, 'start_node_button'):
+                    self.start_node_button.setEnabled(False)
+                if hasattr(self, 'stop_node_button'):
+                    self.stop_node_button.setEnabled(True)
+                
+                self.log_message(f"✅ Enhanced node started")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error starting node: {str(e)}")
     def validate_port(self, port_value, default_port=8082):
         """Validate and convert port value to integer"""
         try:
@@ -5127,6 +6399,8 @@ class UnifiedPythonCoinWallet(QMainWindow):
         self.create_network_tab()
         self.create_ad_creation_tab()
         self.create_developer_portal_tab()
+        # Create transaction queue management tab
+        self.create_transaction_queue_tab()
 
     def log_message(self, message: str):
         """Log message to console and status bar - defensive version"""
@@ -5258,6 +6532,8 @@ class UnifiedPythonCoinWallet(QMainWindow):
         self.create_network_tab()
         self.create_ad_creation_tab()
         self.create_developer_portal_tab()
+        # Create transaction queue management tab
+        self.create_transaction_queue_tab()
     
     def create_menu_bar(self):
         """Create the menu bar (same as before)"""
@@ -6917,14 +8193,14 @@ class UnifiedPythonCoinWallet(QMainWindow):
     # ============================================================================
     
     
-    def start_node(self):
-        """Start blockchain node with port validation"""
-        if self.node:
-            return
-        
+    
+    def start_enhanced_node_server(self):
+        """Start enhanced node server with payment request handling"""
         try:
-            # Get and validate host and port
-            host = "127.0.0.1"
+            if self.node:
+                return
+            
+            host = "0.0.0.0"  # Listen on all interfaces
             port = 5000
             
             if hasattr(self, 'node_host') and self.node_host:
@@ -6936,7 +8212,6 @@ class UnifiedPythonCoinWallet(QMainWindow):
                 try:
                     port = self.get_safe_port_from_ui(self.node_port, 5000)
                 except:
-                    # Fallback port validation
                     try:
                         port_value = self.node_port.value() if hasattr(self.node_port, 'value') else 5000
                         port = int(port_value)
@@ -6945,29 +8220,32 @@ class UnifiedPythonCoinWallet(QMainWindow):
                     except:
                         port = 5000
             
-            self.log_message(f"🚀 Starting blockchain node on {host}:{port}")
+            self.log_message(f"🚀 Starting enhanced node server on {host}:{port}")
             
-            from pythoncoin import Node
-            self.node = Node(host=host, port=port)
-            self.node.blockchain = self.blockchain
-            self.node.wallet = self.wallet
+            # Create enhanced node with payment request handling
+            self.node = EnhancedPythonCoinNode(
+                host=host, 
+                port=port, 
+                blockchain=self.blockchain, 
+                wallet=self.wallet,
+                main_wallet_instance=self
+            )
             
             # Start node in thread
             threading.Thread(target=self.node.start, daemon=True).start()
             
             if hasattr(self, 'node_status'):
-                self.node_status.setText(f"Status: Node running on {host}:{port}")
+                self.node_status.setText(f"Status: Enhanced node running on {host}:{port}")
             if hasattr(self, 'start_node_button'):
                 self.start_node_button.setEnabled(False)
             if hasattr(self, 'stop_node_button'):
                 self.stop_node_button.setEnabled(True)
             
-            self.log_message(f"✅ Blockchain node started on {host}:{port}")
+            self.log_message(f"✅ Enhanced node server started with payment request handling")
             
         except Exception as e:
-            self.log_message(f"❌ Error starting node: {str(e)}")
-            QMessageBox.critical(self, "Node Error", f"Failed to start node: {str(e)}")
-
+            self.log_message(f"❌ Error starting enhanced node: {str(e)}")
+            QMessageBox.critical(self, "Node Error", f"Failed to start enhanced node: {str(e)}")
     def stop_node(self):
         """Stop blockchain node"""
         if self.node:
@@ -10361,11 +11639,425 @@ Your advertisement is now live and ready to earn PYC!"""
             if self.wallet:
                 self.save_wallet()
             
-                    # Stop portal server if running
+            # Stop portal server if running
             if hasattr(self, 'portal_server') and self.portal_server:
                 self.stop_portal_server()
         
             event.accept()
+            
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+            event.accept()
+    def create_transaction_queue_tab(self):
+        """Create transaction queue management tab for automatic payments"""
+        queue_widget = QWidget()
+        queue_layout = QVBoxLayout()
+        queue_widget.setLayout(queue_layout)
+        
+        # Transaction Queue Status
+        status_group = QGroupBox("💰 Automatic Payment System")
+        status_layout = QVBoxLayout()
+        
+        self.payment_system_status = QLabel("Status: Ready for incoming requests")
+        self.payment_system_status.setFont(QFont('Arial', 12, QFont.Weight.Bold))
+        status_layout.addWidget(self.payment_system_status)
+        
+        # Controls
+        controls_layout = QHBoxLayout()
+        
+        self.enable_auto_payments_btn = QPushButton("🔴 Enable Auto-Payments")
+        self.enable_auto_payments_btn.clicked.connect(self.toggle_auto_payments)
+        self.enable_auto_payments_btn.setStyleSheet("background-color: #28a745;")
+        controls_layout.addWidget(self.enable_auto_payments_btn)
+        
+        self.clear_queue_btn = QPushButton("🗑️ Clear Queue")
+        self.clear_queue_btn.clicked.connect(self.clear_transaction_queue)
+        controls_layout.addWidget(self.clear_queue_btn)
+        
+        refresh_queue_btn = QPushButton("🔄 Refresh")
+        refresh_queue_btn.clicked.connect(self.update_transaction_queue_display)
+        controls_layout.addWidget(refresh_queue_btn)
+        
+        status_layout.addLayout(controls_layout)
+        status_group.setLayout(status_layout)
+        queue_layout.addWidget(status_group)
+        
+        # Pending Transactions Queue
+        pending_group = QGroupBox("📋 Pending Payment Requests")
+        pending_layout = QVBoxLayout()
+        
+        # Transaction queue table
+        self.transaction_queue_table = QTableWidget()
+        self.transaction_queue_table.setColumnCount(6)
+        self.transaction_queue_table.setHorizontalHeaderLabels([
+            "Time", "From", "To", "Amount", "Status", "Select"
+        ])
+        
+        queue_header = self.transaction_queue_table.horizontalHeader()
+        queue_header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        
+        pending_layout.addWidget(self.transaction_queue_table)
+        
+        # Batch processing controls
+        batch_layout = QHBoxLayout()
+        
+        self.select_all_btn = QPushButton("☑️ Select All")
+        self.select_all_btn.clicked.connect(self.select_all_transactions)
+        batch_layout.addWidget(self.select_all_btn)
+        
+        self.deselect_all_btn = QPushButton("◻️ Deselect All")
+        self.deselect_all_btn.clicked.connect(self.deselect_all_transactions)
+        batch_layout.addWidget(self.deselect_all_btn)
+        
+        batch_layout.addStretch()
+        
+        # Submit button
+        self.submit_selected_btn = QPushButton("💸 Submit Selected Payments")
+        self.submit_selected_btn.clicked.connect(self.submit_selected_transactions)
+        self.submit_selected_btn.setStyleSheet("background-color: #007bff; font-size: 16px; padding: 12px;")
+        self.submit_selected_btn.setMinimumHeight(50)
+        batch_layout.addWidget(self.submit_selected_btn)
+        
+        pending_layout.addLayout(batch_layout)
+        pending_group.setLayout(pending_layout)
+        queue_layout.addWidget(pending_group)
+        
+        # Auto-payment settings
+        settings_group = QGroupBox("⚙️ Auto-Payment Settings")
+        settings_layout = QFormLayout()
+        
+        self.auto_approve_limit = QDoubleSpinBox()
+        self.auto_approve_limit.setDecimals(8)
+        self.auto_approve_limit.setRange(0, 1000)
+        self.auto_approve_limit.setValue(0.1)  # Auto-approve payments under 0.1 PYC
+        settings_layout.addRow("Auto-approve limit (PYC):", self.auto_approve_limit)
+        
+        self.require_confirmation = QCheckBox("Require confirmation for large payments")
+        self.require_confirmation.setChecked(True)
+        settings_layout.addRow("", self.require_confirmation)
+        
+        settings_group.setLayout(settings_layout)
+        queue_layout.addWidget(settings_group)
+        
+        # Initialize transaction queue system
+        self.transaction_queue = []
+        self.auto_payments_enabled = False
+        
+        # Start transaction queue monitoring
+        self.setup_transaction_queue_monitoring()
+        
+        self.tab_widget.addTab(queue_widget, "💰 Payments")
+    
+    def setup_transaction_queue_monitoring(self):
+        """Setup monitoring for incoming transaction requests"""
+        try:
+            # Timer to check for new transaction requests
+            self.transaction_monitor_timer = QTimer()
+            self.transaction_monitor_timer.timeout.connect(self.check_incoming_transactions)
+            self.transaction_monitor_timer.start(2000)  # Check every 2 seconds
+            
+            self.log_message("✅ Transaction queue monitoring started")
+            
+        except Exception as e:
+            self.log_message(f"❌ Error setting up transaction monitoring: {str(e)}")
+    
+    def check_incoming_transactions(self):
+        """Check for incoming transaction requests through the node server"""
+        try:
+            # Check if node is running and has pending requests
+            if hasattr(self, 'node') and self.node:
+                # Look for incoming transaction requests in node's pending queue
+                if hasattr(self.node, 'pending_payment_requests'):
+                    new_requests = getattr(self.node, 'pending_payment_requests', [])
+                    
+                    for request in new_requests:
+                        self.add_transaction_to_queue(request)
+                    
+                    # Clear processed requests
+                    if new_requests:
+                        self.node.pending_payment_requests = []
+                        self.update_transaction_queue_display()
+                        
+                        if self.auto_payments_enabled:
+                            self.process_auto_payments()
+            
+        except Exception as e:
+            pass  # Silent fail for monitoring
+    
+    def add_transaction_to_queue(self, request):
+        """Add a transaction request to the queue"""
+        try:
+            transaction_data = {
+                'id': str(uuid.uuid4()),
+                'timestamp': datetime.now().isoformat(),
+                'from_address': request.get('from', 'Unknown'),
+                'to_address': request.get('to', ''),
+                'amount': float(request.get('amount', 0)),
+                'message': request.get('message', ''),
+                'status': 'pending',
+                'selected': False,
+                'auto_eligible': float(request.get('amount', 0)) <= self.auto_approve_limit.value()
+            }
+            
+            # Add to queue if not duplicate
+            if not any(t['from_address'] == transaction_data['from_address'] and 
+                      t['to_address'] == transaction_data['to_address'] and
+                      t['amount'] == transaction_data['amount'] and
+                      t['status'] == 'pending'
+                      for t in self.transaction_queue):
+                self.transaction_queue.append(transaction_data)
+                self.log_message(f"📨 New payment request: {transaction_data['amount']:.6f} PYC from {transaction_data['from_address'][:8]}...")
+                
+                # Show notification
+                if hasattr(self, 'statusBar'):
+                    self.statusBar.showMessage(f"New payment request: {transaction_data['amount']:.6f} PYC", 5000)
+                
+                return True
+            
+        except Exception as e:
+            self.log_message(f"❌ Error adding transaction to queue: {str(e)}")
+            
+        return False
+    
+    def update_transaction_queue_display(self):
+        """Update the transaction queue display table"""
+        try:
+            if not hasattr(self, 'transaction_queue_table'):
+                return
+            
+            # Clear existing rows
+            self.transaction_queue_table.setRowCount(0)
+            
+            # Add pending transactions
+            pending_transactions = [t for t in self.transaction_queue if t['status'] == 'pending']
+            self.transaction_queue_table.setRowCount(len(pending_transactions))
+            
+            for row, transaction in enumerate(pending_transactions):
+                # Time
+                time_str = datetime.fromisoformat(transaction['timestamp']).strftime("%H:%M:%S")
+                time_item = QTableWidgetItem(time_str)
+                self.transaction_queue_table.setItem(row, 0, time_item)
+                
+                # From
+                from_item = QTableWidgetItem(f"{transaction['from_address'][:8]}...")
+                self.transaction_queue_table.setItem(row, 1, from_item)
+                
+                # To
+                to_item = QTableWidgetItem(f"{transaction['to_address'][:8]}...")
+                self.transaction_queue_table.setItem(row, 2, to_item)
+                
+                # Amount
+                amount_item = QTableWidgetItem(f"{transaction['amount']:.8f} PYC")
+                if transaction['auto_eligible']:
+                    amount_item.setForeground(QColor(40, 167, 69))  # Green for auto-eligible
+                else:
+                    amount_item.setForeground(QColor(220, 53, 69))  # Red for manual approval
+                self.transaction_queue_table.setItem(row, 3, amount_item)
+                
+                # Status
+                status_text = "✅ Auto-eligible" if transaction['auto_eligible'] else "⚠️ Manual approval"
+                status_item = QTableWidgetItem(status_text)
+                self.transaction_queue_table.setItem(row, 4, status_item)
+                
+                # Select checkbox
+                select_checkbox = QCheckBox()
+                select_checkbox.setChecked(transaction['selected'])
+                select_checkbox.stateChanged.connect(
+                    lambda state, t_id=transaction['id']: self.update_transaction_selection(t_id, state == 2)
+                )
+                self.transaction_queue_table.setCellWidget(row, 5, select_checkbox)
+            
+            # Update status
+            if hasattr(self, 'payment_system_status'):
+                pending_count = len(pending_transactions)
+                selected_count = len([t for t in pending_transactions if t['selected']])
+                auto_eligible_count = len([t for t in pending_transactions if t['auto_eligible']])
+                
+                status_text = f"Status: {pending_count} pending ({selected_count} selected, {auto_eligible_count} auto-eligible)"
+                self.payment_system_status.setText(status_text)
+            
+        except Exception as e:
+            self.log_message(f"❌ Error updating queue display: {str(e)}")
+    
+    def toggle_auto_payments(self):
+        """Toggle automatic payments on/off"""
+        try:
+            self.auto_payments_enabled = not self.auto_payments_enabled
+            
+            if self.auto_payments_enabled:
+                self.enable_auto_payments_btn.setText("🟢 Auto-Payments ON")
+                self.enable_auto_payments_btn.setStyleSheet("background-color: #28a745;")
+                self.log_message("✅ Automatic payments enabled")
+                
+                # Process any eligible transactions immediately
+                self.process_auto_payments()
+            else:
+                self.enable_auto_payments_btn.setText("🔴 Auto-Payments OFF")
+                self.enable_auto_payments_btn.setStyleSheet("background-color: #dc3545;")
+                self.log_message("⏸️ Automatic payments disabled")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error toggling auto-payments: {str(e)}")
+    
+    def process_auto_payments(self):
+        """Process payments that are eligible for automatic approval"""
+        try:
+            if not self.auto_payments_enabled:
+                return
+            
+            auto_processed = 0
+            for transaction in self.transaction_queue:
+                if (transaction['status'] == 'pending' and 
+                    transaction['auto_eligible'] and 
+                    transaction['amount'] <= self.auto_approve_limit.value()):
+                    
+                    # Process the payment
+                    success = self.execute_transaction_payment(transaction)
+                    if success:
+                        transaction['status'] = 'completed_auto'
+                        auto_processed += 1
+            
+            if auto_processed > 0:
+                self.log_message(f"🤖 Auto-processed {auto_processed} payments")
+                self.update_transaction_queue_display()
+                
+        except Exception as e:
+            self.log_message(f"❌ Error in auto-payment processing: {str(e)}")
+    
+    def select_all_transactions(self):
+        """Select all pending transactions"""
+        try:
+            for transaction in self.transaction_queue:
+                if transaction['status'] == 'pending':
+                    transaction['selected'] = True
+            
+            self.update_transaction_queue_display()
+            
+        except Exception as e:
+            self.log_message(f"❌ Error selecting all transactions: {str(e)}")
+    
+    def deselect_all_transactions(self):
+        """Deselect all transactions"""
+        try:
+            for transaction in self.transaction_queue:
+                transaction['selected'] = False
+            
+            self.update_transaction_queue_display()
+            
+        except Exception as e:
+            self.log_message(f"❌ Error deselecting transactions: {str(e)}")
+    
+    def update_transaction_selection(self, transaction_id, selected):
+        """Update selection state of a specific transaction"""
+        try:
+            for transaction in self.transaction_queue:
+                if transaction['id'] == transaction_id:
+                    transaction['selected'] = selected
+                    break
+                    
+        except Exception as e:
+            self.log_message(f"❌ Error updating selection: {str(e)}")
+    
+    def submit_selected_transactions(self):
+        """Submit all selected transactions for payment"""
+        try:
+            selected_transactions = [t for t in self.transaction_queue 
+                                   if t['selected'] and t['status'] == 'pending']
+            
+            if not selected_transactions:
+                QMessageBox.warning(self, "No Selection", "Please select transactions to process")
+                return
+            
+            # Calculate total amount
+            total_amount = sum(t['amount'] for t in selected_transactions)
+            
+            # Check balance
+            current_balance = self.get_current_balance()
+            
+            if total_amount > current_balance:
+                QMessageBox.warning(self, "Insufficient Funds", 
+                                   f"Total amount: {total_amount:.8f} PYC"
+                                   f"Available balance: {current_balance:.8f} PYC")
+                return
+            
+            # Confirm submission
+            reply = QMessageBox.question(self, "Confirm Payments", 
+                                       f"Submit {len(selected_transactions)} payments for a total of {total_amount:.8f} PYC?",
+                                       QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            
+            if reply == QMessageBox.StandardButton.Yes:
+                # Process each selected transaction
+                successful_payments = 0
+                failed_payments = 0
+                
+                for transaction in selected_transactions:
+                    success = self.execute_transaction_payment(transaction)
+                    if success:
+                        transaction['status'] = 'completed_manual'
+                        successful_payments += 1
+                    else:
+                        transaction['status'] = 'failed'
+                        failed_payments += 1
+                
+                # Show results
+                QMessageBox.information(self, "Payment Results", 
+                                       f"Payment processing complete:"
+                                       f"✅ Successful: {successful_payments}"
+                                       f"❌ Failed: {failed_payments}")
+                
+                self.log_message(f"💸 Batch payment complete: {successful_payments} successful, {failed_payments} failed")
+                self.update_transaction_queue_display()
+                
+        except Exception as e:
+            self.log_message(f"❌ Error submitting transactions: {str(e)}")
+            QMessageBox.critical(self, "Payment Error", f"Error processing payments: {str(e)}")
+    
+    def execute_transaction_payment(self, transaction):
+        """Execute a single transaction payment"""
+        try:
+            if not self.wallet or not self.blockchain:
+                return False
+            
+            # Create and send transaction
+            tx = self.wallet.send(transaction['to_address'], transaction['amount'])
+            
+            if tx:
+                self.log_message(f"💰 Payment sent: {transaction['amount']:.6f} PYC to {transaction['to_address'][:8]}...")
+                
+                # Update stats
+                self.stats['payments_sent'] = self.stats.get('payments_sent', 0) + 1
+                
+                # Save blockchain state
+                if hasattr(self, 'save_blockchain'):
+                    self.save_blockchain()
+                
+                return True
+            else:
+                self.log_message(f"❌ Payment failed: {transaction['amount']:.6f} PYC to {transaction['to_address'][:8]}...")
+                return False
+                
+        except Exception as e:
+            self.log_message(f"❌ Transaction execution error: {str(e)}")
+            return False
+    
+    def clear_transaction_queue(self):
+        """Clear completed/failed transactions from queue"""
+        try:
+            original_count = len(self.transaction_queue)
+            
+            # Keep only pending transactions
+            self.transaction_queue = [t for t in self.transaction_queue if t['status'] == 'pending']
+            
+            cleared_count = original_count - len(self.transaction_queue)
+            
+            if cleared_count > 0:
+                self.log_message(f"🗑️ Cleared {cleared_count} completed transactions from queue")
+                self.update_transaction_queue_display()
+            else:
+                QMessageBox.information(self, "Queue Clean", "No completed transactions to clear")
+                
+        except Exception as e:
+            self.log_message(f"❌ Error clearing queue: {str(e)}")
             
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -11328,6 +13020,257 @@ Your advertisement is now live and ready to earn PYC!"""
         
         self.log_message(f"Error creating advertisement: {error_msg}")
         QMessageBox.critical(self, "Error", f"Failed to create advertisement: {error_msg}")
+
+
+
+class EnhancedPythonCoinNode:
+    """Enhanced PythonCoin node with payment request handling"""
+    
+    def __init__(self, host="0.0.0.0", port=5000, blockchain=None, wallet=None, main_wallet_instance=None):
+        self.host = host
+        self.port = port
+        self.blockchain = blockchain
+        self.wallet = wallet
+        self.main_wallet = main_wallet_instance
+        self.running = False
+        self.server = None
+        self.pending_payment_requests = []
+        
+    def start(self):
+        """Start the enhanced node server"""
+        try:
+            from http.server import HTTPServer, BaseHTTPRequestHandler
+            import json
+            import urllib.parse
+            
+            self.running = True
+            
+            class EnhancedNodeHandler(BaseHTTPRequestHandler):
+                def log_message(self, format, *args):
+                    # Custom logging
+                    timestamp = datetime.now().strftime("%H:%M:%S")
+                    print(f"[Node {timestamp}] {format % args}")
+                
+                def do_OPTIONS(self):
+                    """Handle CORS preflight requests"""
+                    self.send_response(200)
+                    self.send_header('Access-Control-Allow-Origin', '*')
+                    self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+                    self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+                    self.end_headers()
+                
+                def do_GET(self):
+                    """Handle GET requests"""
+                    try:
+                        parsed_path = urllib.parse.urlparse(self.path)
+                        path = parsed_path.path
+                        
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        
+                        if path == '/status':
+                            response = {
+                                'success': True,
+                                'status': 'Enhanced PythonCoin Node Active',
+                                'blockchain_height': len(self.server.blockchain.chain) if self.server.blockchain else 0,
+                                'pending_transactions': len(self.server.blockchain.pending_transactions) if self.server.blockchain else 0,
+                                'pending_payment_requests': len(self.server.pending_payment_requests),
+                                'wallet_address': self.server.wallet.address if self.server.wallet else None,
+                                'timestamp': datetime.now().isoformat()
+                            }
+                        elif path == '/blockchain':
+                            # Return blockchain info
+                            response = {
+                                'success': True,
+                                'height': len(self.server.blockchain.chain) if self.server.blockchain else 0,
+                                'latest_block': self.server.blockchain.chain[-1].to_dict() if self.server.blockchain and self.server.blockchain.chain else None
+                            }
+                        elif path == '/pending_requests':
+                            # Return pending payment requests
+                            response = {
+                                'success': True,
+                                'pending_requests': self.server.pending_payment_requests,
+                                'count': len(self.server.pending_payment_requests)
+                            }
+                        else:
+                            response = {
+                                'success': False,
+                                'error': 'Unknown endpoint',
+                                'available_endpoints': ['/status', '/blockchain', '/pending_requests', '/payment_request']
+                            }
+                        
+                        self.wfile.write(json.dumps(response).encode())
+                        
+                    except Exception as e:
+                        error_response = {'success': False, 'error': str(e)}
+                        self.wfile.write(json.dumps(error_response).encode())
+                
+                def do_POST(self):
+                    """Handle POST requests including payment requests"""
+                    try:
+                        content_length = int(self.headers.get('Content-Length', 0))
+                        post_data = self.rfile.read(content_length)
+                        
+                        parsed_path = urllib.parse.urlparse(self.path)
+                        path = parsed_path.path
+                        
+                        # Parse JSON data
+                        try:
+                            data = json.loads(post_data.decode('utf-8')) if post_data else {}
+                        except json.JSONDecodeError:
+                            data = {}
+                        
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'application/json')
+                        self.send_header('Access-Control-Allow-Origin', '*')
+                        self.end_headers()
+                        
+                        if path == '/payment_request':
+                            # Handle payment request
+                            response = self.server.handle_payment_request(data)
+                        elif path == '/transaction':
+                            # Handle transaction submission
+                            response = self.server.handle_transaction_submission(data)
+                        elif path == '/sync':
+                            # Handle blockchain sync
+                            response = self.server.handle_blockchain_sync(data)
+                        else:
+                            response = {
+                                'success': False,
+                                'error': f'Unknown POST endpoint: {path}',
+                                'available_endpoints': ['/payment_request', '/transaction', '/sync']
+                            }
+                        
+                        self.wfile.write(json.dumps(response).encode())
+                        
+                    except Exception as e:
+                        error_response = {'success': False, 'error': str(e)}
+                        self.wfile.write(json.dumps(error_response).encode())
+            
+            # Create and configure server
+            self.server = HTTPServer((self.host, self.port), EnhancedNodeHandler)
+            self.server.blockchain = self.blockchain
+            self.server.wallet = self.wallet
+            self.server.main_wallet = self.main_wallet
+            self.server.pending_payment_requests = self.pending_payment_requests
+            self.server.handle_payment_request = self.handle_payment_request
+            self.server.handle_transaction_submission = self.handle_transaction_submission
+            self.server.handle_blockchain_sync = self.handle_blockchain_sync
+            
+            print(f"[Node] Enhanced PythonCoin node starting on {self.host}:{self.port}")
+            
+            # Serve requests
+            while self.running:
+                try:
+                    self.server.handle_request()
+                except Exception as e:
+                    if self.running:
+                        print(f"[Node] Request handling error: {e}")
+                    break
+                    
+        except Exception as e:
+            print(f"[Node] Enhanced node startup error: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            if self.server:
+                self.server.server_close()
+            print(f"[Node] Enhanced node stopped")
+    
+    def handle_payment_request(self, data):
+        """Handle incoming payment request"""
+        try:
+            # Validate payment request data
+            required_fields = ['from', 'to', 'amount']
+            for field in required_fields:
+                if field not in data:
+                    return {'success': False, 'error': f'Missing required field: {field}'}
+            
+            # Create payment request
+            payment_request = {
+                'id': str(uuid.uuid4()),
+                'from': data['from'],
+                'to': data['to'],
+                'amount': float(data['amount']),
+                'message': data.get('message', ''),
+                'timestamp': datetime.now().isoformat(),
+                'status': 'pending'
+            }
+            
+            # Add to pending requests
+            self.pending_payment_requests.append(payment_request)
+            
+            print(f"[Node] New payment request: {payment_request['amount']} PYC from {payment_request['from'][:8]}...")
+            
+            # Notify main wallet if available
+            if self.main_wallet and hasattr(self.main_wallet, 'add_transaction_to_queue'):
+                self.main_wallet.add_transaction_to_queue(payment_request)
+            
+            return {
+                'success': True,
+                'message': 'Payment request received',
+                'request_id': payment_request['id'],
+                'status': 'pending'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def handle_transaction_submission(self, data):
+        """Handle transaction submission"""
+        try:
+            # Validate transaction data
+            if not all(key in data for key in ['to', 'amount']):
+                return {'success': False, 'error': 'Missing required transaction fields'}
+            
+            to_address = data['to']
+            amount = float(data['amount'])
+            
+            # Check if we have a wallet to send from
+            if not self.wallet:
+                return {'success': False, 'error': 'No wallet available for transaction'}
+            
+            # Attempt to create and send transaction
+            tx = self.wallet.send(to_address, amount)
+            
+            if tx:
+                return {
+                    'success': True,
+                    'message': 'Transaction submitted successfully',
+                    'tx_id': tx.tx_id,
+                    'amount': amount,
+                    'to': to_address
+                }
+            else:
+                return {'success': False, 'error': 'Failed to create transaction'}
+                
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def handle_blockchain_sync(self, data):
+        """Handle blockchain synchronization request"""
+        try:
+            if not self.blockchain:
+                return {'success': False, 'error': 'No blockchain available'}
+            
+            # Return current blockchain state
+            return {
+                'success': True,
+                'blockchain_height': len(self.blockchain.chain),
+                'latest_hash': self.blockchain.chain[-1].hash if self.blockchain.chain else None,
+                'pending_transactions': len(self.blockchain.pending_transactions)
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+    
+    def stop(self):
+        """Stop the enhanced node server"""
+        self.running = False
+        if self.server:
+            self.server.server_close()
 
 def main():
     """Enhanced main application entry point with genesis coordination"""

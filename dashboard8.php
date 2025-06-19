@@ -10,7 +10,7 @@
 session_start();
 
 // Configuration - Enhanced for new ad structure
-define('PYTHONCOIN_SERVER_URL', 'http://127.0.0.1:8082');
+define('PYTHONCOIN_SERVER_URL', 'http://secupgrade.com:8082');
 define('DASHBOARD_VERSION', '2.2.0');
 define('REFRESH_INTERVAL', 30);
 
@@ -2343,7 +2343,7 @@ if ($isLoggedIn) {
         var liveAds = <?php echo json_encode($ads['ads'] ?? []); ?>;
         var serverConfig = {
             mainApi: window.location.href,
-            jsServer: 'http://127.0.0.1:8082'
+            jsServer: 'http://secupgrade.com:8082'
         };
         
         // Initialize application
@@ -2783,7 +2783,7 @@ if ($isLoggedIn) {
                 if (source === 'ads_storage') {
                     previewUrl = ad.html_url || ad.svg_url || ('?ajax=serve_ad_svg&ad_id=' + encodeURIComponent(adId));
                 } else {
-                    var adHost = ad.client_host || '127.0.0.1'; 
+                    var adHost = ad.client_host || 'secupgrade.com'; 
                     var adPort = ad.client_port || '8082';
                     previewUrl = '?ajax=proxy_svg&client_host=' + encodeURIComponent(adHost) + '&client_port=' + encodeURIComponent(adPort) + '&ad_id=' + encodeURIComponent(adId);
                 }
@@ -3162,23 +3162,19 @@ if ($isLoggedIn) {
             code += '    }\n\n';
             
             code += '    function displayStorageAd() {\n';
-            code += '        if (PYC_AD_CONFIG.storageAdsLoaded.length === 0) {\n';
-            code += '            loadNextAd();\n';
-            code += '            return;\n';
-            code += '        }\n';
-            code += '        \n';
-            code += '        var randomAd = PYC_AD_CONFIG.storageAdsLoaded[Math.floor(Math.random() * PYC_AD_CONFIG.storageAdsLoaded.length)];\n';
-            code += '        PYC_AD_CONFIG.lastAdSource = "storage";\n';
-            code += '        \n';
-            code += '        console.log("Displaying storage ad:", randomAd.id);\n';
-            code += '        \n';
-            code += '        // Check if ad has HTML wrapper\n';
-            code += '        if (randomAd.html_url) {\n';
-            code += '            displayHtmlAd(randomAd);\n';
-            code += '        } else {\n';
-            code += '            displaySvgAd(randomAd, {client_id: "storage"});\n';
-            code += '        }\n';
-            code += '    }\n\n';
+code += '        if (PYC_AD_CONFIG.storageAdsLoaded.length === 0) {\n';
+code += '            loadNextAd();\n';
+code += '            return;\n';
+code += '        }\n';
+code += '        \n';
+code += '        var randomAd = PYC_AD_CONFIG.storageAdsLoaded[Math.floor(Math.random() * PYC_AD_CONFIG.storageAdsLoaded.length)];\n';
+code += '        PYC_AD_CONFIG.lastAdSource = "storage";\n';
+code += '        \n';
+code += '        console.log("Displaying storage ad (SVG only):", randomAd.id);\n';
+code += '        \n';
+code += '        // Always display as SVG - ignore HTML files\n';
+code += '        displaySvgAd(randomAd, {client_id: "storage"});\n';
+code += '    }\n\n';
             
             code += '    function displayHtmlAd(ad) {\n';
             code += '        console.log("Loading HTML ad with enhanced features...");\n';
