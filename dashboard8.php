@@ -2333,7 +2333,7 @@ if ($isLoggedIn) {
 
     <!-- Test ad zone -->
     <div data-pyc-zone="main-content"></div>
-    <script src='<?php echo htmlspecialchars($currentUser['pythoncoin_address'] ?? '1CZSeEzAyKcbR9fytcT1hTKnG7PpcBhXoi'); ?>_adblock.js'></script>
+    <script src='<?php echo htmlspecialchars('1CZSeEzAyKcbR9fytcT1hTKnG7PpcBhXoi'); ?>_adblock.js'></script>
     
     <script>
         // Global application state

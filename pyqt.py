@@ -1,28 +1,12 @@
-#!/usr/bin/env python3
-"""
-Fixed Unified PythonCoin P2P Ad Network Wallet
-Combines cryptocurrency wallet functionality with P2P advertising network
-Automatic payments to developers on ad clicks with proper genesis distribution
-"""
+
 from urllib.parse import parse_qs
 import sys
-# Enhanced Database Auto-Registration for P2P Clients
 import mysql.connector
 import requests
 import atexit
 import signal
 import socket
-
-# Enhanced Database Manager for Full Integration
-
-# Enhanced Database Manager for Full Integration
 class EnhancedDatabaseManager:
-    """
-    Comprehensive database manager for PythonCoin P2P Ad Network.
-    Handles connection, table creation, and data operations for developers,
-    P2P clients, ad clicks, and ad caching.
-    """
-    
     def __init__(self, db_config=None):
         self.db_config = db_config or {
             'host': 'localhost',
@@ -57,7 +41,6 @@ class EnhancedDatabaseManager:
                 temp_conn.close()
 
     def connect(self):
-        """Establishes a connection to the MySQL database."""
         if self.is_connected and self.connection and hasattr(self.connection, 'is_connected') and self.connection.is_connected():
             return True
         try:
@@ -78,64 +61,6 @@ class EnhancedDatabaseManager:
             self.is_connected = False
             self.connection = None
             return False
-            
-    def _create_tables(self):
-        """Creates necessary tables for the ad network if they don't already exist."""
-        if not self.connect():
-            logger.error("Cannot create tables: Database not connected.")
-            return
-
-        cursor = self.connection.cursor()
-        try:
-            tables = {
-                'developers': """
-                    CREATE TABLE IF NOT EXISTS developers (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        username VARCHAR(100) UNIQUE NOT NULL,
-                        pythoncoin_address VARCHAR(100) UNIQUE NOT NULL,
-                        email VARCHAR(255),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                """,
-                'p2p_clients': """
-                    CREATE TABLE IF NOT EXISTS p2p_clients (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        client_id VARCHAR(100) UNIQUE NOT NULL,
-                        name VARCHAR(255),
-                        host VARCHAR(255),
-                        port VARCHAR(10),
-                        status VARCHAR(50),
-                        ad_count INT DEFAULT 0,
-                        peers INT DEFAULT 0,
-                        last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-                    )
-                """,
-                'ad_clicks': """
-                    CREATE TABLE IF NOT EXISTS ad_clicks (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        ad_id VARCHAR(100),
-                        client_id VARCHAR(100),
-                        developer_address VARCHAR(100),
-                        zone VARCHAR(100),
-                        payout_amount DECIMAL(16,8),
-                        click_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ip_address VARCHAR(45),
-                        user_agent TEXT,
-                        processed BOOLEAN DEFAULT FALSE
-                    )
-                """
-            }
-
-            for table_name, create_sql in tables.items():
-                cursor.execute(create_sql)
-                logger.info(f"Table '{table_name}' ensured to exist.")
-            self.connection.commit()
-            logger.info("Enhanced database tables initialized successfully.")
-        except Exception as err:
-            logger.error(f"Error creating enhanced tables: {err}")
-        finally:
-            cursor.close()
-
     def add_developer(self, username, pythoncoin_address, email=None):
         """Adds a new developer to the database if they don't already exist."""
         if not self.connect(): 
@@ -191,7 +116,6 @@ class DatabaseManager:
         self.is_connected = False
         
     def connect(self):
-        """Connect to database"""
         try:
             import mysql.connector
             self.connection = mysql.connector.connect(
@@ -211,7 +135,6 @@ class DatabaseManager:
             return False
     
     def disconnect(self):
-        """Disconnect from database"""
         if self.connection:
             try:
                 self.connection.close()
@@ -221,7 +144,6 @@ class DatabaseManager:
                 pass
     
     def execute_query(self, query, params=None, fetch=False):
-        """Execute database query safely"""
         if not self.is_connected and not self.connect():
             return None
         
@@ -242,7 +164,6 @@ class DatabaseManager:
             return None
     
     def register_client(self, client_data):
-        """Register or update P2P client in database"""
         try:
             query = """
                 INSERT INTO p2p_clients 
@@ -284,7 +205,6 @@ class DatabaseManager:
             return False
     
     def create_ad(self, ad_data):
-        """Create new advertisement in database"""
         try:
             query = """
                 INSERT INTO ads 
@@ -327,7 +247,6 @@ class DatabaseManager:
             
             result = self.execute_query(query, params)
             if result:
-                # Update client ad count
                 self.update_client_ad_count(ad_data.get('peer_source', ''))
             return result
             
@@ -351,12 +270,10 @@ class DatabaseManager:
             return False
     
     def get_all_clients(self):
-        """Get all P2P clients"""
         query = "SELECT * FROM p2p_clients ORDER BY last_seen DESC"
         return self.execute_query(query, fetch=True) or []
     
     def get_active_ads(self):
-        """Get all active advertisements"""
         query = """
             SELECT a.*, c.name as client_name 
             FROM ads a 
@@ -367,7 +284,6 @@ class DatabaseManager:
         return self.execute_query(query, fetch=True) or []
     
     def record_ad_click(self, click_data):
-        """Record an ad click"""
         try:
             query = """
                 INSERT INTO ad_clicks 
@@ -393,7 +309,6 @@ class DatabaseManager:
             return False
     
     def create_notification(self, notification_data):
-        """Create system notification"""
         try:
             query = """
                 INSERT INTO notifications (type, title, message, recipient_type, metadata, priority)
@@ -416,7 +331,6 @@ class DatabaseManager:
             return False
     
     def get_recent_notifications(self, limit=10):
-        """Get recent notifications"""
         query = """
             SELECT * FROM notifications 
             WHERE recipient_type IN ('all', 'clients')
@@ -426,7 +340,6 @@ class DatabaseManager:
         return self.execute_query(query, (limit,), fetch=True) or []
     
     def update_client_status(self, client_id, status):
-        """Update client status"""
         query = """
             UPDATE p2p_clients 
             SET status = %s, last_seen = CURRENT_TIMESTAMP 
@@ -434,9 +347,7 @@ class DatabaseManager:
         """
         return self.execute_query(query, (status, client_id))
 
-
 class DatabaseAutoRegistration:
-    """Handles automatic database registration for P2P clients"""
     
     def __init__(self, username, wallet_address, client_name="PythonCoin P2P Client", port=8082):
         self.username = username
@@ -467,7 +378,6 @@ class DatabaseAutoRegistration:
         atexit.register(self.cleanup_on_exit)
     
     def get_local_ip(self):
-        """Get local IP address"""
         try:
             import socket
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
@@ -477,7 +387,6 @@ class DatabaseAutoRegistration:
             return "secupgrade.com"
     
     def connect_database(self):
-        """Connect to MySQL database"""
         try:
             self.db_connection = mysql.connector.connect(
                 host=self.db_config['host'],
@@ -492,11 +401,9 @@ class DatabaseAutoRegistration:
             return False
     
     def register_client(self, wallet=None, blockchain=None):
-        """Register client with database and server"""
         if self.registered:
             return True
         
-        # Generate sample ad inventory
         ad_inventory = [
             {
                 'ad_id': f'pyc_ad_{self.client_id}_1',
@@ -511,7 +418,6 @@ class DatabaseAutoRegistration:
             }
         ]
         
-        # Prepare registration data
         registration_data = {
             'action': 'client_register_live',
             'client_id': self.client_id,
@@ -530,23 +436,19 @@ class DatabaseAutoRegistration:
             }
         }
         
-        # Try to register with server
         success = self.register_with_server(registration_data)
         
-        # If server registration fails, try direct database registration
         if not success:
             success = self.register_with_database(registration_data)
         
         if success:
             self.registered = True
             logger.info(f"✅ Client registered successfully: {self.client_id}")
-            # Start background heartbeat
             self.start_heartbeat()
         
         return success
     
     def register_with_server(self, data):
-        """Register with remote server"""
         try:
             response = requests.post(
                 self.server_config['api_url'],
@@ -573,7 +475,6 @@ class DatabaseAutoRegistration:
         cursor = self.db_connection.cursor()
         
         try:
-            # Register client
             cursor.execute("""
                 INSERT INTO p2p_clients 
                 (client_id, name, host, port, username, wallet_address, status, version, 
@@ -599,7 +500,7 @@ class DatabaseAutoRegistration:
             cursor.close()
     
     def start_heartbeat(self):
-        """Start heartbeat thread"""
+        """ """
     def heartbeat_worker():
             while self.registered:
                 try:
@@ -661,11 +562,8 @@ import socketserver
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler
-# Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("PythonCoin-P2P-Wallet")
-
-# PyQt5 imports
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                            QHBoxLayout, QLabel, QPushButton, QLineEdit, 
                            QTextEdit, QTabWidget, QTableWidget, QTableWidgetItem,
@@ -684,17 +582,12 @@ from PyQt5.QtGui import QColor, QFont
 from PyQt5.QtGui import QIcon, QPixmap, QFont, QPalette, QColor, QImage, QClipboard
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QSize, QByteArray, QBuffer
 
-# HTTP server imports
-# aiohttp replaced with standard HTTP server
-# aiohttp replaced with standard HTTP server
 import asyncio
-# aiohttp replaced with standard HTTP server
-# Import PythonCoin core components
 from pythoncoin import (Blockchain, Wallet, Transaction, TransactionInput, TransactionOutput,
                       DataTransaction, DSAVerificationTransaction, CryptoUtils, Node, Block)
 
 
-# Enhanced imports for enterprise features
+
 try:
     import mysql.connector
     MYSQL_AVAILABLE = True
@@ -705,10 +598,6 @@ except ImportError:
 
 from decimal import Decimal
 from urllib.parse import urlparse, parse_qs
-
-# ============================================================================
-# Data Classes for P2P Ad Network (same as before)
-# ============================================================================
 
 @dataclass
 class AdContent:
@@ -760,10 +649,6 @@ class ClickEvent:
     processed: bool = False
     transaction_id: str = ""
 
-# ============================================================================
-# Enhanced P2P Manager with Genesis Coordination
-# ============================================================================
-
 class CryptoP2PManager(QThread):
     """Enhanced P2P Manager with genesis coordination and cryptocurrency payment processing"""
     
@@ -791,29 +676,22 @@ class CryptoP2PManager(QThread):
         self.discovery_timeout = 30  # Wait 30 seconds for peer discovery before genesis
         
     def run(self):
-        """Start P2P socket manager with genesis coordination"""
         self.running = True
         self.statusUpdate.emit("Starting crypto P2P discovery...")
         
-        # Start discovery server
         threading.Thread(target=self._discovery_server, daemon=True).start()
         
-        # Start peer discovery broadcast
         threading.Thread(target=self._discovery_broadcast, daemon=True).start()
         
-        # Start peer connection handler
         threading.Thread(target=self._peer_handler, daemon=True).start()
         
-        # Start click processing thread
         threading.Thread(target=self._process_clicks, daemon=True).start()
         
-        # Start genesis coordination
         threading.Thread(target=self._coordinate_genesis, daemon=True).start()
         
         self.statusUpdate.emit("Crypto P2P Manager started")
     
     def _coordinate_genesis(self):
-        """Coordinate genesis block creation with connected peers"""
         if self.blockchain.genesis_complete:
             logger.info("Genesis block already exists")
             return
@@ -821,18 +699,15 @@ class CryptoP2PManager(QThread):
         logger.info(f"Starting genesis coordination - waiting {self.discovery_timeout} seconds for peers...")
         start_time = time.time()
         
-        # Wait for peer discovery or timeout
         while time.time() - start_time < self.discovery_timeout and self.running:
             time.sleep(1)
             
-            # Check if we have enough peers for a meaningful distribution
             connected_peers = [p for p in self.peers.values() if p.status == 'connected' and p.wallet_address]
             
             if len(connected_peers) >= 2:  # Wait for at least 2 other peers
                 logger.info(f"Found {len(connected_peers)} peers, proceeding with genesis coordination")
                 break
         
-        # Collect all peer addresses including our own
         genesis_addresses = [self.wallet.address]
         for peer in self.peers.values():
             if peer.status == 'connected' and peer.wallet_address:
@@ -843,17 +718,14 @@ class CryptoP2PManager(QThread):
         else:
             logger.info(f"Creating genesis block with {len(genesis_addresses)} addresses")
         
-        # Set genesis addresses and create genesis block
         self.blockchain.set_genesis_addresses(genesis_addresses)
         self.genesis_coordination_complete = True
         
-        # Notify main application
         self.genesisReady.emit(genesis_addresses)
         
         self.statusUpdate.emit(f"Genesis block created with {len(genesis_addresses)} participants")
     
     def _discovery_server(self):
-        """UDP discovery server"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         
@@ -876,7 +748,6 @@ class CryptoP2PManager(QThread):
             sock.close()
     
     def _discovery_broadcast(self):
-        """Broadcast presence with wallet info"""
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         
@@ -905,7 +776,6 @@ class CryptoP2PManager(QThread):
         sock.close()
     
     def _handle_discovery_message(self, data: bytes, addr):
-        """Handle discovery messages"""
         try:
             message = json.loads(data.decode())
             
@@ -918,7 +788,6 @@ class CryptoP2PManager(QThread):
             logger.debug(f"Discovery message error: {e}")
     
     def _add_discovered_peer(self, message: Dict, host: str):
-        """Add discovered peer"""
         peer_id = message['peer_id']
         
         if peer_id not in self.peers:
@@ -936,15 +805,12 @@ class CryptoP2PManager(QThread):
             self.peers[peer_id] = peer
             self.peerDiscovered.emit(peer_id, host, message['port'])
             
-            # Attempt connection
             threading.Thread(target=self._connect_to_peer, args=(peer,), daemon=True).start()
         else:
-            # Update existing peer info
             self.peers[peer_id].last_seen = datetime.now().isoformat()
             self.peers[peer_id].wallet_address = message.get('wallet_address', '')
     
     def _connect_to_peer(self, peer: PeerInfo):
-        """Connect to peer"""
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(10)
@@ -977,7 +843,6 @@ class CryptoP2PManager(QThread):
             logger.debug(f"Failed to connect to peer {peer.peer_id}: {e}")
     
     def _peer_handler(self):
-        """Handle incoming connections"""
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1003,7 +868,6 @@ class CryptoP2PManager(QThread):
                 self.server_socket.close()
     
     def _handle_peer_connection(self, client_sock, addr):
-        """Handle peer connection"""
         try:
             client_sock.settimeout(30)
             
@@ -1035,7 +899,6 @@ class CryptoP2PManager(QThread):
             client_sock.close()
     
     def _handle_peer_messages(self, sock, peer_id):
-        """Handle peer messages"""
         while self.running:
             try:
                 message = self._receive_message(sock)
@@ -1062,7 +925,6 @@ class CryptoP2PManager(QThread):
         self.peerDisconnected.emit(peer_id)
     
     def _handle_click_notification(self, message):
-        """Handle click notification from peer"""
         try:
             click_data = message.get('click_data', {})
             
@@ -1082,7 +944,6 @@ class CryptoP2PManager(QThread):
             logger.error(f"Error handling click notification: {e}")
     
     def _handle_payment_request(self, message):
-        """Handle payment request from peer"""
         try:
             payment_data = message.get('payment_data', {})
             recipient = payment_data.get('recipient_address', '')
@@ -1106,7 +967,6 @@ class CryptoP2PManager(QThread):
             logger.error(f"Error handling payment request: {e}")
     
     def _handle_blockchain_sync(self, message):
-        """Handle blockchain synchronization request"""
         try:
             sync_data = message.get('sync_data', {})
             peer_height = sync_data.get('blockchain_height', 0)
@@ -1130,8 +990,6 @@ class CryptoP2PManager(QThread):
                     click = self.pending_clicks.pop(0)
                     
                     if not click.processed and click.developer_address:
-                        # Send payment to developer
-                        # Use corrected balance calculation
                         try:
                             balance = self.override_wallet_get_balance()
                         except AttributeError:
@@ -1155,13 +1013,11 @@ class CryptoP2PManager(QThread):
                 time.sleep(5)
     
     def _send_message(self, sock, message):
-        """Send message to peer"""
         data = json.dumps(message).encode()
         length = struct.pack('!I', len(data))
         sock.sendall(length + data)
     
     def _receive_message(self, sock):
-        """Receive message from peer"""
         try:
             length_data = sock.recv(4)
             if len(length_data) < 4:
@@ -1182,7 +1038,6 @@ class CryptoP2PManager(QThread):
             return None
     
     def _request_ads_from_peer(self, peer_id):
-        """Request ads from peer"""
         if peer_id not in self.peer_sockets:
             return
         
@@ -1201,7 +1056,6 @@ class CryptoP2PManager(QThread):
             logger.error(f"Failed to request ads from {peer_id}: {e}")
     
     def notify_click(self, ad_id: str, user_id: str, developer_address: str):
-        """Notify peers of an ad click"""
         click_data = {
             'type': 'click_notification',
             'click_data': {
@@ -1213,7 +1067,6 @@ class CryptoP2PManager(QThread):
             }
         }
         
-        # Send to all connected peers
         for peer_id, sock in self.peer_sockets.items():
             try:
                 self._send_message(sock, click_data)
@@ -1222,14 +1075,11 @@ class CryptoP2PManager(QThread):
     
 
     def ensure_coinbase_transaction_exists(self):
-        """Ensure a coinbase transaction exists before mining"""
         try:
-            # Check if pending transactions already has a coinbase
             has_coinbase = any(getattr(tx, 'tx_type', '') == 'coinbase' 
                              for tx in self.blockchain.pending_transactions)
             
             if not has_coinbase:
-                # Create coinbase transaction
                 coinbase_tx = self.create_coinbase_transaction()
                 if coinbase_tx:
                     self.blockchain.pending_transactions.insert(0, coinbase_tx)
@@ -1239,11 +1089,9 @@ class CryptoP2PManager(QThread):
             logger.error(f"Error ensuring coinbase transaction: {str(e)}")
     
     def create_coinbase_transaction(self):
-        """Create a proper coinbase transaction for mining rewards"""
         try:
             from pythoncoin import Transaction, TransactionOutput
             
-            # Create coinbase transaction (no inputs, only output to miner)
             mining_reward = 50.0  # Standard mining reward
             
             coinbase_tx = Transaction(
@@ -1252,7 +1100,6 @@ class CryptoP2PManager(QThread):
                 outputs=[TransactionOutput(address=self.wallet.address, amount=mining_reward)]
             )
             
-            # Set coinbase-specific properties
             coinbase_tx.tx_type = 'coinbase'
             coinbase_tx.timestamp = time.time()
             coinbase_tx.tx_id = f"coinbase_{uuid.uuid4().hex[:16]}"
@@ -1266,12 +1113,10 @@ class CryptoP2PManager(QThread):
             return None
     
     def validate_mined_block_has_coinbase(self, block):
-        """Validate that the mined block has a proper coinbase transaction"""
         try:
             if not block or not hasattr(block, 'transactions'):
                 return False
             
-            # Check if first transaction is coinbase
             if not block.transactions:
                 logger.warning("Mined block has no transactions!")
                 return False
@@ -1281,7 +1126,6 @@ class CryptoP2PManager(QThread):
                 logger.warning("Mined block's first transaction is not coinbase!")
                 return False
             
-            # Check if coinbase goes to our address
             coinbase_reward = 0
             for output in first_tx.outputs:
                 if output.address == self.wallet.address:
@@ -1299,16 +1143,10 @@ class CryptoP2PManager(QThread):
             return False
 
     def stop(self):
-        """Stop the P2P manager"""
         self.running = False
         self.statusUpdate.emit("Crypto P2P Manager stopped")
 
-# ============================================================================
-# Enhanced Mining Thread with Better Integration
-# ============================================================================
-
 class CryptoMiningThread(QThread):
-    """Enhanced mining thread with better blockchain integration"""
     
     status_update = pyqtSignal(str)
     hashrate_update = pyqtSignal(float)
@@ -1327,11 +1165,9 @@ class CryptoMiningThread(QThread):
         self.ad_payments_processed = 0
         
     def run(self):
-        """Run the mining process with better integration"""
         self.running = True
         self.status_update.emit("🔍 Mining thread started - checking components...")
         
-        # Debug: Check if we have required components
         if not self.blockchain:
             self.status_update.emit("❌ Error: No blockchain available")
             return
@@ -1342,11 +1178,9 @@ class CryptoMiningThread(QThread):
         
         self.status_update.emit(f"✅ Components ready - wallet: {self.wallet.address[:8]}...")
         print(f"time variable: {locals().get('time', 'NOT FOUND')}")
-        #start_time = some_value
         self.start_time = time.time()  # Works!
         self.status_update.emit("Crypto mining started")
         
-        # Wait for genesis block if not ready
         if not self.blockchain.genesis_complete:
             self.status_update.emit("Waiting for genesis block...")
             while not self.blockchain.genesis_complete and self.running:
@@ -1356,7 +1190,6 @@ class CryptoMiningThread(QThread):
         
         while self.running:
             try:
-                # Simple mining process - ensure we have transactions
                 if len(self.blockchain.pending_transactions) == 0:
                     self.status_update.emit("No pending transactions, creating data transaction")
                     try:
@@ -1377,16 +1210,13 @@ class CryptoMiningThread(QThread):
                         time.sleep(5)
                         continue
                 
-                # Start mining
                 tx_count = len(self.blockchain.pending_transactions)
                 self.status_update.emit(f"Mining block with {tx_count} transactions")
                 
-                # Create coinbase transaction if needed
                 if not any(getattr(tx, 'tx_type', '') == 'coinbase' for tx in self.blockchain.pending_transactions):
                     self.status_update.emit("Creating coinbase transaction for mining...")
                     try:
                         
-                        # Create coinbase transaction
                         coinbase_tx = Transaction(
                             sender="",  # Coinbase has no sender
                             inputs=[],  # Coinbase has no inputs
@@ -1397,24 +1227,20 @@ class CryptoMiningThread(QThread):
                         coinbase_tx.tx_id = f"coinbase_{uuid.uuid4().hex[:16]}"
                         coinbase_tx.signature = ""
                         
-                        # Add to pending transactions at the beginning
                         self.blockchain.pending_transactions.insert(0, coinbase_tx)
                         self.status_update.emit("Coinbase transaction created")
                         
                     except Exception as e:
                         self.status_update.emit(f"Coinbase creation error: {str(e)}")
                 
-                # Mine a new block
                 new_block = self.blockchain.mine_pending_transactions(self.wallet.address)
                 
                 if new_block and self.running:
-                    # Validate the mined block has proper coinbase
                     if self.validate_mined_block_has_coinbase(new_block):
                         self.blocks_mined += 1
                         self.status_update.emit(f"Block mined! Height: {new_block.index}, Hash: {new_block.hash[:16]}...")
                         self.new_block.emit(new_block)
                         
-                        # Log coinbase details
                         if new_block.transactions:
                             first_tx = new_block.transactions[0]
                             if getattr(first_tx, 'tx_type', '') == 'coinbase':
@@ -1424,15 +1250,12 @@ class CryptoMiningThread(QThread):
                         self.status_update.emit("⚠️ Mined block failed coinbase validation!")
                     self.new_block.emit(new_block)
                     
-                    # Calculate hashrate
                     elapsed_time = time.time() - self.start_time
                     hashrate = new_block.nonce / elapsed_time if elapsed_time > 0 else 0
                     self.hashrate_update.emit(hashrate)
                     
-                    # Reset timing for next block
                     self.start_time = time.time()
                     
-                    # Brief pause before mining next block
                     time.sleep(2)
                 else:
                     self.status_update.emit("Mining failed, retrying...")
@@ -1443,16 +1266,12 @@ class CryptoMiningThread(QThread):
                 logger.error(f"Mining error: {str(e)}")
                 time.sleep(5)
     def validate_mined_block_has_coinbase(self, block):
-        """Validate that the mined block has a proper coinbase transaction"""
         if not block.transactions:
             return False
         
-        # Check if first transaction is coinbase
         coinbase_tx = block.transactions[0]
         
-        # Coinbase transaction should have no inputs (or special input)
         if hasattr(coinbase_tx, 'inputs') and coinbase_tx.inputs:
-            # Check if it's a proper coinbase input (usually empty or special)
             return len(coinbase_tx.inputs) == 0 or coinbase_tx.inputs[0].get('coinbase', False)
         
         return True  # or implement your specific validation logic
@@ -1461,16 +1280,8 @@ class CryptoMiningThread(QThread):
         self.running = False
         self.status_update.emit("Crypto mining stopped")
 
-# ============================================================================
-# Main Unified Wallet Application (Enhanced)
-# ============================================================================
-
-
 class WorkingDeveloperPortalServer:
-    """
-    HTTP Server for the PythonCoin Developer Portal API that actually works.
-    This server handles API requests including developer registration and ad serving.
-    """
+
     def __init__(self, host='0.0.0.0', port=8082, wallet=None, blockchain=None, db_manager=None):
         self.host = host
         self.port = port
@@ -1482,7 +1293,6 @@ class WorkingDeveloperPortalServer:
         self.running = False
         self.registered_developers = {}
         
-        # Define explicit routes for better clarity and control
         self.router = {
             '/register_developer': self._handle_register_developer,
             '/ads': self._handle_get_ads,
@@ -1503,7 +1313,6 @@ class WorkingDeveloperPortalServer:
         try:
             from http.server import HTTPServer
             
-            # Create the server
             self.httpd = HTTPServer((self.host, self.port), self._create_handler_class())
             self.running = True
             
@@ -1520,7 +1329,6 @@ class WorkingDeveloperPortalServer:
             return False
 
     def stop(self):
-        """Stops the HTTP server"""
         try:
             self.running = False
             if self.httpd:
@@ -1532,7 +1340,6 @@ class WorkingDeveloperPortalServer:
             logger.error(f"Error stopping server: {e}")
 
     def _serve_forever(self):
-        """Serve requests forever (runs in separate thread)"""
         try:
             logger.info(f"Server listening on {self.host}:{self.port}...")
             self.httpd.serve_forever()
@@ -1541,17 +1348,14 @@ class WorkingDeveloperPortalServer:
                 logger.error(f"Server error: {e}")
 
     def _create_handler_class(self):
-        """Creates a handler class with access to the server instance"""
         server_instance = self
         
         class WorkingPortalHandler(BaseHTTPRequestHandler):
             def log_message(self, format, *args):
-                # Custom logging to avoid spam
                 timestamp = time.strftime("%H:%M:%S", time.localtime())
                 logger.debug(f"[{timestamp}] {format % args}")
 
             def _parse_request_body(self):
-                """Parses the request body based on Content-Type header"""
                 content_length = int(self.headers.get('Content-Length', 0))
                 if content_length > 0:
                     body = self.rfile.read(content_length).decode('utf-8')
@@ -1566,20 +1370,17 @@ class WorkingDeveloperPortalServer:
                     elif 'application/x-www-form-urlencoded' in content_type:
                         from urllib.parse import parse_qs
                         parsed_data = parse_qs(body)
-                        # Convert lists to single values
                         return {k: v[0] if isinstance(v, list) and len(v) == 1 else v 
                                for k, v in parsed_data.items()}
                 return {}
 
             def _send_cors_headers(self):
-                """Send CORS headers"""
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
                 self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
                 self.send_header('Access-Control-Max-Age', '86400')
 
             def _send_json_response(self, data, status_code=200):
-                """Helper to send a JSON response with CORS headers"""
                 self.send_response(status_code)
                 self.send_header('Content-Type', 'application/json')
                 self._send_cors_headers()
@@ -1587,13 +1388,11 @@ class WorkingDeveloperPortalServer:
                 self.wfile.write(json.dumps(data).encode('utf-8'))
 
             def do_OPTIONS(self):
-                """Handle CORS preflight requests"""
                 self.send_response(200)
                 self._send_cors_headers()
                 self.end_headers()
 
             def do_GET(self):
-                """Handle GET requests"""
                 try:
                     parsed_path = urllib.parse.urlparse(self.path)
                     path = parsed_path.path
@@ -1624,7 +1423,6 @@ class WorkingDeveloperPortalServer:
                     }, 500)
 
             def do_POST(self):
-                """Handle POST requests"""
                 try:
                     parsed_path = urllib.parse.urlparse(self.path)
                     path = parsed_path.path
@@ -1651,9 +1449,7 @@ class WorkingDeveloperPortalServer:
         return WorkingPortalHandler
 
     def _handle_register_developer(self, handler, data):
-        """Handle developer registration"""
         try:
-            # Support multiple field names for compatibility
             developer = (data.get('developer') or 
                         data.get('developer_name') or 
                         data.get('username') or '')
@@ -1667,7 +1463,6 @@ class WorkingDeveloperPortalServer:
             
             logger.info(f"Registration attempt: {developer} -> {pythoncoin_address}")
             
-            # Validation
             if not developer:
                 return handler._send_json_response({
                     'success': False, 
@@ -1680,10 +1475,8 @@ class WorkingDeveloperPortalServer:
                     'error': 'Missing PythonCoin address'
                 })
             
-            # Store registration
             self.registered_developers[developer] = pythoncoin_address
             
-            # Try to save to database if available
             if self.db_manager and hasattr(self.db_manager, 'add_developer'):
                 try:
                     self.db_manager.add_developer(developer, pythoncoin_address, email)
@@ -1708,9 +1501,7 @@ class WorkingDeveloperPortalServer:
             })
 
     def _handle_get_ads(self, handler, query_params):
-        """Handle requests for advertisements"""
         try:
-            # Get sample ads for now
             ads = self._get_sample_ads()
             
             logger.info(f"Serving {len(ads)} ads")
@@ -1728,7 +1519,6 @@ class WorkingDeveloperPortalServer:
             })
 
     def _handle_ad_click(self, handler, data):
-        """Handle ad click recording"""
         try:
             ad_id = data.get('ad_id', '')
             developer = data.get('developer', '')
@@ -1736,7 +1526,6 @@ class WorkingDeveloperPortalServer:
             
             logger.info(f"Ad click: {ad_id} by {developer} for {payout_amount} PYC")
             
-            # In a real implementation, this would process the payment
             return handler._send_json_response({
                 'success': True,
                 'message': 'Click recorded',
@@ -1751,7 +1540,6 @@ class WorkingDeveloperPortalServer:
             })
 
     def _handle_client_info(self, handler, query_params):
-        """Provide client information"""
         try:
             info = {
                 "success": True,
@@ -1776,7 +1564,6 @@ class WorkingDeveloperPortalServer:
             })
 
     def _handle_status_info(self, handler, query_params):
-        """Provide server status"""
         try:
             status = {
                 "success": True,
@@ -1795,7 +1582,6 @@ class WorkingDeveloperPortalServer:
             })
 
     def _get_sample_ads(self):
-        """Get real advertisements from storage and network"""
         try:
             if hasattr(self, 'wallet_instance') and self.wallet_instance:
                 if hasattr(self.wallet_instance, 'ad_fetcher'):
@@ -1835,7 +1621,6 @@ class WorkingDeveloperPortalServer:
             print(f"Error getting real ads: {e}")
             return []
 class RobustPythonCoinHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for PythonCoin server with robust error handling"""
     
     def __init__(self, *args, **kwargs):
         self.server_instance = kwargs.pop('server_instance', None)
@@ -2023,7 +1808,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             elif 'application/x-www-form-urlencoded' in content_type:
                 from urllib.parse import parse_qs
                 parsed_data = parse_qs(body)
-                # parse_qs returns lists for each value, convert to scalar for single values
                 converted_data = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in parsed_data.items()}
                 logger.debug(f"Parsed form-urlencoded data: {converted_data}")
                 return converted_data
@@ -2034,12 +1818,9 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
         return {}
     
     def do_POST(self):
-        """Handle POST requests with enhanced debugging"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
-            
-            # Log the incoming request for debugging
             path = urllib.parse.urlparse(self.path).path
             logger.debug(f"POST request to: {path}")
             logger.debug(f"Content-Length: {content_length}")
@@ -2057,7 +1838,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             
-            # Route POST requests to appropriate handlers
             if path == '/register_developer':
                 logger.debug("Handling register_developer request")
                 response = self.server_instance.handle_register_developer(data)
@@ -2124,7 +1904,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
 
     
     def quick_server_test(self):
-        """Quick test of server after creation"""
         try:
             time.sleep(0.2)  # Brief delay
             
@@ -2140,7 +1919,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             self.status_update.emit(f"⚠️ Server connectivity test error: {str(e)}")
     
     def handle_client_info(self):
-        """Handle client info requests"""
         try:
             client_info = {
                 'success': True,
@@ -2162,7 +1940,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             return json.dumps({'success': False, 'error': str(e)})
     
     def handle_stats(self):
-        """Handle stats requests"""
         try:
             stats = {
                 'success': True,
@@ -2182,7 +1959,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             return json.dumps({'success': False, 'error': str(e)})
     
     def handle_click(self, data):
-        """Enhanced ad click handling with developer tracking"""
         try:
             ad_id = data.get('ad_id', '')
             developer = data.get('developer', '')
@@ -2224,7 +2000,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             return json.dumps({'success': False, 'error': str(e)})
     
     def handle_register_developer(self, data):
-        """Enhanced developer registration with session tracking"""
         try:
             developer = (data.get('developer') or 
                         data.get('developer_name') or 
@@ -2289,17 +2064,14 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             if not pythoncoin_address:
                 return json.dumps({'success': False, 'error': 'Missing PythonCoin wallet address'})
             
-            # Validate address format
             if len(pythoncoin_address) < 26 or len(pythoncoin_address) > 35:
                 return json.dumps({'success': False, 'error': 'Invalid PythonCoin address format'})
             
-            # Store in original format for compatibility
             if not hasattr(self, 'registered_developers'):
                 self.registered_developers = {}
             
             self.registered_developers[developer] = pythoncoin_address
             
-            # Enhanced database storage
             if hasattr(self, 'enhanced_db_manager') and self.enhanced_db_manager:
                 try:
                     self.enhanced_db_manager.add_developer(developer, pythoncoin_address, email)
@@ -2308,14 +2080,12 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
                     logger.error(f"[ENHANCED_REGISTER] Database error: {db_error}")
             elif hasattr(self, 'db_manager') and self.db_manager:
                 try:
-                    # Try with existing db_manager
                     if hasattr(self.db_manager, 'add_developer'):
                         self.db_manager.add_developer(developer, pythoncoin_address, email)
                     logger.info(f"[ENHANCED_REGISTER] Saved to existing database")
                 except Exception as db_error:
                     logger.error(f"[ENHANCED_REGISTER] Existing DB error: {db_error}")
             
-            # Emit signal if available
             if hasattr(self, 'developer_registered'):
                 try:
                     self.developer_registered.emit(developer, pythoncoin_address)
@@ -2351,136 +2121,14 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
             })
     
     def generate_portal_html(self):
-        """Generate portal HTML page"""
-        return f"""<!DOCTYPE html>
-<html>
-<head>
-    <title>PythonCoin Developer Portal</title>
-    <style>
-        body {{ font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }}
-        .container {{ max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 10px; }}
-        h1 {{ color: #0066cc; }}
-        .status {{ padding: 15px; background: #d4edda; border-radius: 8px; margin: 20px 0; }}
-        .info {{ background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 10px 0; }}
-        button {{ background: #0066cc; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; margin: 5px; }}
-        button:hover {{ background: #0056b3; }}
-        .result {{ margin: 20px 0; padding: 15px; border-radius: 8px; }}
-        .success {{ background: #d4edda; border: 1px solid #c3e6cb; }}
-        .error {{ background: #f8d7da; border: 1px solid #f5c6cb; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🌐 PythonCoin Developer Portal</h1>
-        
-        <div class="status">
-            ✅ Server is running successfully on port {self.actual_port}
-        </div>
-        
-        <div class="info">
-            <h3>📊 Server Information</h3>
-            <p><strong>Status:</strong> Online and accepting connections</p>
-            <p><strong>Port:</strong> {self.actual_port}</p>
-            <p><strong>Wallet:</strong> {self.wallet.address[:16] + '...' if self.wallet else 'None'}</p>
-            <p><strong>Blockchain Height:</strong> {len(self.blockchain.chain) if self.blockchain else 0}</p>
-            <p><strong>Ads Served:</strong> {self.ads_served}</p>
-            <p><strong>Registered Developers:</strong> {len(self.registered_developers)}</p>
-            <p><strong>Server Started:</strong> {self.server_started}</p>
-        </div>
-        
-        <div class="info">
-            <h3>🔗 API Endpoints</h3>
-            <ul>
-                <li><code>GET /test</code> - Test server connection</li>
-                <li><code>GET /client_info</code> - Get client information</li>
-                <li><code>GET /stats</code> - Get server statistics</li>
-                <li><code>GET /portal</code> - This portal page</li>
-                <li><code>POST /click</code> - Record ad click</li>
-                <li><code>POST /register_developer</code> - Register developer</li>
-            </ul>
-        </div>
-        
-        <div>
-            <button onclick="testConnection()">🔍 Test Connection</button>
-            <button onclick="getStats()">📊 Get Statistics</button>
-            <button onclick="getClientInfo()">📋 Client Info</button>
-        </div>
-        
-        <div id="result"></div>
-        
-        <script>
-            function showResult(content, isSuccess = true) {{
-                const resultDiv = document.getElementById('result');
-                resultDiv.className = 'result ' + (isSuccess ? 'success' : 'error');
-                resultDiv.innerHTML = content;
-            }}
-            
-            function testConnection() {{
-                fetch('/test')
-                    .then(response => response.json())
-                    .then(data => {{
-                        if (data.success) {{
-                            showResult('✅ Connection test successful!<br>' + 
-                                     'Server: ' + data.status + '<br>' +
-                                     'Time: ' + data.server_time);
-                        }} else {{
-                            showResult('❌ Connection test failed: ' + (data.error || 'Unknown error'), false);
-                        }}
-                    }})
-                    .catch(error => {{
-                        showResult('❌ Connection failed: ' + error, false);
-                    }});
-            }}
-            
-            function getStats() {{
-                fetch('/stats')
-                    .then(response => response.json())
-                    .then(data => {{
-                        if (data.success) {{
-                            showResult('<h4>📊 Current Statistics:</h4><pre>' + 
-                                     JSON.stringify(data, null, 2) + '</pre>');
-                        }} else {{
-                            showResult('❌ Stats request failed: ' + (data.error || 'Unknown error'), false);
-                        }}
-                    }})
-                    .catch(error => {{
-                        showResult('❌ Stats request failed: ' + error, false);
-                    }});
-            }}
-            
-            function getClientInfo() {{
-                fetch('/client_info')
-                    .then(response => response.json())
-                    .then(data => {{
-                        if (data.success) {{
-                            showResult('<h4>📋 Client Information:</h4><pre>' + 
-                                     JSON.stringify(data, null, 2) + '</pre>');
-                        }} else {{
-                            showResult('❌ Client info request failed: ' + (data.error || 'Unknown error'), false);
-                        }}
-                    }})
-                    .catch(error => {{
-                        showResult('❌ Client info request failed: ' + error, false);
-                    }});
-            }}
-            
-            // Test connection on page load
-            window.onload = function() {{
-                testConnection();
-            }};
-        </script>
-    </div>
-</body>
-</html>"""
+        return f""" ! """
     
     
     def get_svg_file_path(self, path):
         """Get the file path for SVG files"""
         try:
-            # Remove leading slash and get filename
             filename = path.lstrip('/')
             
-            # Check in ads storage directory
             if hasattr(self, 'wallet_instance') and self.wallet_instance:
                 storage_base = getattr(self.wallet_instance, 'ad_storage', None)
                 if storage_base and hasattr(storage_base, 'base_dir'):
@@ -2488,7 +2136,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
                     if svg_path.exists():
                         return str(svg_path)
             
-            # Check in current directory
             local_path = os.path.join(os.getcwd(), filename)
             if os.path.exists(local_path):
                 return local_path
@@ -2502,8 +2149,8 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
     def generate_default_svg(self):
         """Generate a default SVG when file not found"""
         return """<?xml version="1.0" encoding="UTF-8"?>
-<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg">
-    <rect width="400" height="300" fill="#f0f9ff" stroke="#0066cc" stroke-width="2"/>
+<svg width="auto" height="300" xmlns="http://www.w3.org/2000/svg">
+    <rect width="auto" height="300" fill="#f0f9ff" stroke="#0066cc" stroke-width="2"/>
     <text x="200" y="150" text-anchor="middle" font-family="Arial" font-size="16" fill="#0066cc">
         PythonCoin Ad
     </text>
@@ -2513,7 +2160,6 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
 </svg>"""
 
     def stop(self):
-        """Stop the server"""
         try:
             self.running = False
             self.server_started = False
@@ -2538,13 +2184,11 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
         pass
                 
     def do_OPTIONS(self):
-                    """Handle CORS preflight requests"""
                     self.send_response(200)
                     self.send_cors_headers()
                     self.end_headers()
                 
     def send_cors_headers(self):
-        """Send enhanced CORS headers"""
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With, X-Developer-Address, X-Zone')
@@ -2555,29 +2199,23 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
         # Add these critical headers
         self.send_header('Access-Control-Allow-Credentials', 'true')
         self.send_header('Vary', 'Origin')
-    # In your PyQt P2P client HTTP server
     def add_cors_headers(self, response):
         response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-Developer-Address, X-Zone'
         response.headers['Access-Control-Max-Age'] = '86400'
         return response
-                
-    # Add this to the do_GET method in EnhancedPythonCoinHandler class
-# Find the do_GET method around line 600-800 and add this case:
+
     def handle_get_ads(self):
         """Get available ads in the format expected by JavaScript"""
         try:
-            # Get ads from the wallet instance
             if hasattr(self, 'wallet_instance') and self.wallet_instance:
                 ads_list = getattr(self.wallet_instance, 'ads', [])
             else:
                 ads_list = self.get_available_ads()  # Fallback method
             
-            # Format ads for JavaScript consumption
             formatted_ads = []
             for ad in ads_list:
-                # Handle both AdContent objects and dictionaries
                 if hasattr(ad, 'to_dict'):
                     ad_dict = ad.to_dict()
                 elif hasattr(ad, '__dict__'):
@@ -2624,7 +2262,6 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
             }
             return json.dumps(error_response)
     def do_GET(self):
-        """Handle GET requests with enhanced routing"""
         try:
             parsed_path = urllib.parse.urlparse(self.path)
             path = parsed_path.path
@@ -2633,7 +2270,6 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_cors_headers()
             
-            # Route handling
             if path == '/client_info':
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -2652,7 +2288,6 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
                 response = self.server_instance.handle_get_active_clients()
                 self.wfile.write(response.encode())
                 
-            # Ads endpoint handler
             elif path == '/ads':
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
@@ -2705,17 +2340,14 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
             elif path.endswith('.svg'):
                 self.send_header('Content-Type', 'image/svg+xml')
                 self.send_header('Cache-Control', 'public, max-age=3600')
-                # Add CSP-friendly headers for SVG
                 self.send_header('Content-Security-Policy', "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:;")
                 self.end_headers()
                 
-                # Serve SVG file if it exists
                 svg_file_path = self.server_instance.get_svg_file_path(path)
                 if svg_file_path and os.path.exists(svg_file_path):
                     with open(svg_file_path, 'rb') as f:
                         self.wfile.write(f.read())
                 else:
-                    # Generate a default SVG
                     default_svg = self.server_instance.generate_default_svg()
                     self.wfile.write(default_svg.encode())
                     
@@ -2723,53 +2355,9 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'text/html')
                 self.end_headers()
                 
-                # Get ads data
                 ads_response = self.server_instance.handle_get_ads()
                 
-                debug_html = f"""<!DOCTYPE html>
-    <html>
-    <head>
-        <title>PythonCoin Ads Debug</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-            .ad-item {{ border: 1px solid #ccc; padding: 15px; margin: 10px 0; border-radius: 8px; }}
-            .json-data {{ background: #f5f5f5; padding: 10px; font-family: monospace; white-space: pre-wrap; }}
-        </style>
-    </head>
-    <body>
-        <h1>PythonCoin Ads Debug</h1>
-        <h2>Raw Ads Data:</h2>
-        <div class="json-data">{ads_response}</div>
-        
-        <h2>Test Links:</h2>
-        <ul>
-            <li><a href="/ads">Get Ads JSON</a></li>
-            <li><a href="/client_info">Client Info</a></li>
-            <li><a href="/stats">Server Stats</a></li>
-            <li><a href="/portal">Developer Portal</a></li>
-        </ul>
-        
-        <script>
-            // Test the ads endpoint
-            fetch('/ads')
-                .then(response => response.json())
-                .then(data => {{
-                    console.log('Ads data:', data);
-                    if (data.success) {{
-                        document.body.innerHTML += '<h2>✅ Ads endpoint working!</h2>';
-                        document.body.innerHTML += '<p>Found ' + data.total + ' ads</p>';
-                    }} else {{
-                        document.body.innerHTML += '<h2>❌ Ads endpoint failed</h2>';
-                        document.body.innerHTML += '<p>Error: ' + data.error + '</p>';
-                    }}
-                }})
-                .catch(error => {{
-                    console.error('Error:', error);
-                    document.body.innerHTML += '<h2>❌ Network error</h2>';
-                }});
-        </script>
-    </body>
-    </html>"""
+                debug_html = f""" """
                 
                 self.wfile.write(debug_html.encode())
                 
@@ -2865,15 +2453,8 @@ class EnhancedPythonCoinHandler(BaseHTTPRequestHandler):
             except:
                 pass
                 
-            # Use ThreadingHTTPServer for better performance
     def handler(*args, **kwargs):
                 return EnhancedPythonCoinHandler(*args, server_instance=self, **kwargs)
-
-#!/usr/bin/env python3
-"""
-Enhanced Ad Click Payment Processor Injection Script
-Fixes MySQL connection issues and implements auto-payment for unprocessed ad clicks
-"""
 
 import sys
 import json
@@ -2889,9 +2470,7 @@ from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidge
 from PyQt5.QtGui import QColor, QFont
 
 class EnhancedAdClickProcessor(QThread):
-    """Enhanced processor for unprocessed ad clicks with auto-payment"""
     
-    # Signals for UI updates
     new_click_detected = pyqtSignal(dict)
     payment_completed = pyqtSignal(str, float, str)  # click_id, amount, developer_address
     payment_failed = pyqtSignal(str, str)  # click_id, error_message
@@ -2906,12 +2485,10 @@ class EnhancedAdClickProcessor(QThread):
         self.check_interval = 5  # Check every 5 seconds
         self.processed_clicks = set()  # Track processed clicks to avoid duplicates
         
-        # Database connection
         self.db_connection = None
         self.setup_database_connection()
         
     def setup_database_connection(self):
-        """Setup enhanced database connection with retry logic"""
         try:
             db_config = {
                 'host': 'localhost',
@@ -2937,72 +2514,16 @@ class EnhancedAdClickProcessor(QThread):
             return False
     
     def ensure_tables_exist(self):
-        """Ensure all required tables exist with proper structure"""
         try:
             cursor = self.db_connection.cursor()
             
             # Enhanced ad_clicks table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS ad_clicks (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    ad_id VARCHAR(100) NOT NULL,
-                    client_id VARCHAR(100),
-                    developer_address VARCHAR(100) NOT NULL,
-                    developer_name VARCHAR(100),
-                    zone VARCHAR(100) DEFAULT 'default',
-                    payout_amount DECIMAL(16,8) NOT NULL DEFAULT 0.00100000,
-                    click_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ip_address VARCHAR(45),
-                    user_agent TEXT,
-                    processed TINYINT(1) DEFAULT 0,
-                    processed_time TIMESTAMP NULL,
-                    transaction_id VARCHAR(100),
-                    payment_status VARCHAR(20) DEFAULT 'pending',
-                    error_message TEXT,
-                    retry_count INT DEFAULT 0,
-                    INDEX idx_processed (processed),
-                    INDEX idx_click_time (click_time),
-                    INDEX idx_developer (developer_address),
-                    INDEX idx_payment_status (payment_status)
-                )
-            """)
+            cursor.execute(""" """)
             
-            # Payment queue table for batch processing
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS payment_queue (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    click_id INT NOT NULL,
-                    developer_address VARCHAR(100) NOT NULL,
-                    amount DECIMAL(16,8) NOT NULL,
-                    status VARCHAR(20) DEFAULT 'queued',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    processed_at TIMESTAMP NULL,
-                    transaction_id VARCHAR(100),
-                    error_message TEXT,
-                    FOREIGN KEY (click_id) REFERENCES ad_clicks(id),
-                    INDEX idx_status (status),
-                    INDEX idx_created (created_at)
-                )
-            """)
+            cursor.execute(""" """)
             
             # Developer payment history
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS developer_payments (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    developer_address VARCHAR(100) NOT NULL,
-                    developer_name VARCHAR(100),
-                    total_clicks INT DEFAULT 0,
-                    total_earnings DECIMAL(16,8) DEFAULT 0.00000000,
-                    last_payment TIMESTAMP NULL,
-                    last_click TIMESTAMP NULL,
-                    status VARCHAR(20) DEFAULT 'active',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY unique_developer (developer_address),
-                    INDEX idx_developer (developer_address),
-                    INDEX idx_last_payment (last_payment)
-                )
-            """)
+            cursor.execute(""" """)
             
             cursor.close()
             self.status_update.emit("✅ Database tables verified/created")
@@ -3017,7 +2538,6 @@ class EnhancedAdClickProcessor(QThread):
         
         while self.running:
             try:
-                # Check for unprocessed clicks
                 unprocessed_clicks = self.fetch_unprocessed_clicks()
                 
                 if unprocessed_clicks:
@@ -3027,14 +2547,11 @@ class EnhancedAdClickProcessor(QThread):
                         if not self.running:
                             break
                         
-                        # Emit signal for UI update
                         self.new_click_detected.emit(click)
                         
-                        # Process auto-payments if enabled
                         if self.auto_payment_enabled:
                             self.process_auto_payment(click)
                 
-                # Sleep before next check
                 time.sleep(self.check_interval)
                 
             except Exception as e:
@@ -3042,7 +2559,6 @@ class EnhancedAdClickProcessor(QThread):
                 time.sleep(10)  # Wait longer on error
     
     def fetch_unprocessed_clicks(self):
-        """Fetch unprocessed ad clicks from database"""
         try:
             if not self.db_connection or not self.db_connection.is_connected():
                 if not self.setup_database_connection():
@@ -3050,7 +2566,6 @@ class EnhancedAdClickProcessor(QThread):
             
             cursor = self.db_connection.cursor(dictionary=True)
             
-            # Fetch unprocessed clicks with developer info
             query = """
                 SELECT 
                     ac.*,
@@ -3067,7 +2582,6 @@ class EnhancedAdClickProcessor(QThread):
             results = cursor.fetchall()
             cursor.close()
             
-            # Filter out already processed clicks to avoid duplicates
             new_clicks = []
             for click in results:
                 click_id = click['id']
@@ -3082,13 +2596,11 @@ class EnhancedAdClickProcessor(QThread):
             return []
     
     def process_auto_payment(self, click):
-        """Process automatic payment for eligible clicks"""
         try:
             click_id = click['id']
             amount = float(click['payout_amount'])
             developer_address = click['developer_address']
             
-            # Check if eligible for auto-payment
             if amount <= self.auto_payment_limit:
                 success = self.execute_payment(click)
                 
@@ -3103,7 +2615,6 @@ class EnhancedAdClickProcessor(QThread):
             self.status_update.emit(f"❌ Auto-payment error: {str(e)}")
     
     def execute_payment(self, click):
-        """Execute payment to developer"""
         try:
             click_id = click['id']
             amount = float(click['payout_amount'])
@@ -8664,7 +8175,6 @@ Your advertisement is now live and ready to earn PYC!"""
             # Try multiple methods to get balance with fallbacks
             balance = 0.0
             
-            # Method 1: Try override method if it exists
             if hasattr(self, 'override_wallet_get_balance'):
                 try:
                     balance = self.override_wallet_get_balance()
@@ -8672,7 +8182,6 @@ Your advertisement is now live and ready to earn PYC!"""
                     self.log_message(f"Override balance method failed: {str(e)}")
                     balance = 0.0
             
-            # Method 2: Try wallet get_balance if override failed
             if balance == 0.0 and hasattr(self.wallet, 'get_balance'):
                 try:
                     balance = self.wallet.get_balance()
@@ -8680,7 +8189,6 @@ Your advertisement is now live and ready to earn PYC!"""
                     self.log_message(f"Wallet balance method failed: {str(e)}")
                     balance = 0.0
             
-            # Method 3: Try blockchain get_balance as final fallback
             if balance == 0.0 and hasattr(self.blockchain, 'get_balance') and self.wallet:
                 try:
                     balance = self.blockchain.get_balance(self.wallet.address)
@@ -8694,7 +8202,6 @@ Your advertisement is now live and ready to earn PYC!"""
             self.log_message(f"Error getting balance: {str(e)}")
             balance = 0.0
         
-        # Check if sufficient funds available
         if balance < daily_budget:
             QMessageBox.warning(self, "Insufficient Funds", 
                                f"You need at least {daily_budget:.8f} PYC for one day of advertising.\n"
@@ -8702,15 +8209,13 @@ Your advertisement is now live and ready to earn PYC!"""
             return
         
         try:
-            # Create ad object
             ad_id = str(uuid.uuid4())
             
-            # Get image URL (in real implementation, upload to IPFS or similar)
             image_url = ""
             if hasattr(self, 'current_ad_image'):
                 image_url = f"file://{self.current_ad_image}"  # Local file for demo
             
-            # Get targeting options
+
             interests = [i.strip() for i in self.target_interests.text().split(',') if i.strip()]
             targeting = {
                 'interests': interests,
