@@ -2277,12 +2277,495 @@ class EnhancedDeveloperRegistration:
         except Exception as e:
             logger.error(f"Cleanup error: {e}")
 
+# --------------------------------
+# Advanced Node Discovery System
+# --------------------------------
+
+class NodeDiscovery:
+    """Advanced P2P node discovery system for PythonCoin network"""
+    
+    def __init__(self, node_instance):
+        self.node = node_instance
+        self.known_peers = set()
+        self.active_peers = set()
+        self.peer_info = {}
+        self.discovery_thread = None
+        self.running = False
+        
+        # Bootstrap nodes (seed nodes for initial discovery)
+        self.bootstrap_nodes = [
+            ("secupgrade.com", 5000),
+            ("127.0.0.1", 5001),
+            ("127.0.0.1", 5002)
+        ]
+        
+        logger.info("Node discovery system initialized")
+    
+    def start_discovery(self):
+        """Start the node discovery process"""
+        if self.running:
+            return
+            
+        self.running = True
+        self.discovery_thread = threading.Thread(target=self._discovery_loop, daemon=True)
+        self.discovery_thread.start()
+        logger.info("🔍 Node discovery started")
+    
+    def stop_discovery(self):
+        """Stop the node discovery process"""
+        self.running = False
+        if self.discovery_thread:
+            self.discovery_thread.join(timeout=2)
+        logger.info("🔍 Node discovery stopped")
+    
+    def _discovery_loop(self):
+        """Main discovery loop"""
+        while self.running:
+            try:
+                # 1. Bootstrap discovery from known seed nodes
+                self._bootstrap_discovery()
+                
+                # 2. Query known peers for more peers
+                self._peer_to_peer_discovery()
+                
+                # 3. Health check existing connections
+                self._health_check_peers()
+                
+                # 4. Clean up inactive peers
+                self._cleanup_inactive_peers()
+                
+                # Sleep before next discovery cycle
+                time.sleep(30)
+                
+            except Exception as e:
+                logger.error(f"Discovery loop error: {e}")
+                time.sleep(10)
+    
+    def _bootstrap_discovery(self):
+        """Bootstrap discovery from seed nodes"""
+        for host, port in self.bootstrap_nodes:
+            if not self.running:
+                break
+                
+            try:
+                if (host, port) == (self.node.host, self.node.port):
+                    continue  # Skip self
+                
+                peer_info = self._query_peer(host, port)
+                if peer_info:
+                    self._add_peer(host, port, peer_info)
+                    
+            except Exception as e:
+                logger.debug(f"Bootstrap query failed for {host}:{port} - {e}")
+    
+    def _peer_to_peer_discovery(self):
+        """Query existing peers for more peers"""
+        for peer_addr in list(self.active_peers):
+            if not self.running:
+                break
+                
+            try:
+                host, port = peer_addr
+                peer_list = self._request_peer_list(host, port)
+                
+                for peer_data in peer_list:
+                    peer_host = peer_data.get('host')
+                    peer_port = peer_data.get('port')
+                    
+                    if peer_host and peer_port:
+                        if (peer_host, peer_port) not in self.known_peers:
+                            peer_info = self._query_peer(peer_host, peer_port)
+                            if peer_info:
+                                self._add_peer(peer_host, peer_port, peer_info)
+                                
+            except Exception as e:
+                logger.debug(f"P2P discovery error with {peer_addr}: {e}")
+    
+    def _query_peer(self, host, port, timeout=5):
+        """Query a peer for basic information"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect((host, port))
+                
+                # Send peer info request
+                request = {
+                    "type": "peer_info_request",
+                    "node_id": self.node.node_id,
+                    "timestamp": time.time()
+                }
+                
+                message = json.dumps(request).encode() + b'\n'
+                sock.send(message)
+                
+                # Receive response
+                response_data = sock.recv(4096).decode().strip()
+                if response_data:
+                    response = json.loads(response_data)
+                    if response.get("type") == "peer_info_response":
+                        return response.get("data", {})
+                        
+        except Exception as e:
+            logger.debug(f"Peer query failed for {host}:{port}: {e}")
+            
+        return None
+    
+    def _request_peer_list(self, host, port, timeout=5):
+        """Request list of known peers from a peer"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect((host, port))
+                
+                request = {
+                    "type": "peer_list_request",
+                    "node_id": self.node.node_id,
+                    "timestamp": time.time()
+                }
+                
+                message = json.dumps(request).encode() + b'\n'
+                sock.send(message)
+                
+                response_data = sock.recv(8192).decode().strip()
+                if response_data:
+                    response = json.loads(response_data)
+                    if response.get("type") == "peer_list_response":
+                        return response.get("peers", [])
+                        
+        except Exception as e:
+            logger.debug(f"Peer list request failed for {host}:{port}: {e}")
+            
+        return []
+    
+    def _add_peer(self, host, port, peer_info):
+        """Add a peer to our known peers"""
+        peer_addr = (host, port)
+        self.known_peers.add(peer_addr)
+        self.active_peers.add(peer_addr)
+        self.peer_info[peer_addr] = {
+            **peer_info,
+            'discovered_at': time.time(),
+            'last_seen': time.time(),
+            'connection_count': 0,
+            'successful_connections': 0
+        }
+        
+        logger.info(f"🔗 Discovered peer: {host}:{port}")
+    
+    def _health_check_peers(self):
+        """Health check existing peers"""
+        for peer_addr in list(self.active_peers):
+            try:
+                host, port = peer_addr
+                peer_info = self._query_peer(host, port, timeout=3)
+                
+                if peer_info:
+                    self.peer_info[peer_addr]['last_seen'] = time.time()
+                    self.peer_info[peer_addr]['successful_connections'] += 1
+                else:
+                    # Peer is not responding
+                    if peer_addr in self.active_peers:
+                        self.active_peers.remove(peer_addr)
+                        logger.debug(f"🔴 Peer inactive: {host}:{port}")
+                        
+            except Exception as e:
+                logger.debug(f"Health check error for {peer_addr}: {e}")
+    
+    def _cleanup_inactive_peers(self):
+        """Clean up peers that haven't been seen for a while"""
+        current_time = time.time()
+        inactive_timeout = 300  # 5 minutes
+        
+        for peer_addr in list(self.known_peers):
+            peer_data = self.peer_info.get(peer_addr, {})
+            last_seen = peer_data.get('last_seen', 0)
+            
+            if current_time - last_seen > inactive_timeout:
+                self.known_peers.discard(peer_addr)
+                self.active_peers.discard(peer_addr)
+                if peer_addr in self.peer_info:
+                    del self.peer_info[peer_addr]
+                logger.debug(f"🗑️ Cleaned up inactive peer: {peer_addr}")
+    
+    def get_active_peers(self):
+        """Get list of currently active peers"""
+        return list(self.active_peers)
+    
+    def get_peer_count(self):
+        """Get count of active peers"""
+        return len(self.active_peers)
+    
+    def broadcast_to_peers(self, message_data):
+        """Broadcast a message to all active peers"""
+        successful_sends = 0
+        
+        for peer_addr in list(self.active_peers):
+            try:
+                host, port = peer_addr
+                success = self._send_message_to_peer(host, port, message_data)
+                if success:
+                    successful_sends += 1
+                    
+            except Exception as e:
+                logger.debug(f"Broadcast error to {peer_addr}: {e}")
+        
+        return successful_sends
+    
+    def _send_message_to_peer(self, host, port, message_data, timeout=5):
+        """Send a message to a specific peer"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect((host, port))
+                
+                message = json.dumps(message_data).encode() + b'\n'
+                sock.send(message)
+                
+                return True
+                
+        except Exception as e:
+            logger.debug(f"Message send failed to {host}:{port}: {e}")
+            return False
+
+# --------------------------------
+# Advanced Difficulty Adjustment
+# --------------------------------
+
+class DifficultyAdjustment:
+    """Advanced difficulty adjustment algorithm for PythonCoin"""
+    
+    def __init__(self, blockchain):
+        self.blockchain = blockchain
+        self.target_block_time = 60  # 1 minute per block
+        self.adjustment_interval = 10  # Adjust every 10 blocks
+        self.max_adjustment_factor = 4  # Maximum 4x adjustment per period
+        
+    def calculate_next_difficulty(self):
+        """Calculate the difficulty for the next block"""
+        chain_length = len(self.blockchain.chain)
+        
+        # Use default difficulty for first few blocks
+        if chain_length < self.adjustment_interval:
+            return 4  # Starting difficulty
+        
+        # Get the last adjustment_interval blocks
+        recent_blocks = self.blockchain.chain[-self.adjustment_interval:]
+        
+        # Calculate actual time taken for these blocks
+        time_taken = recent_blocks[-1].timestamp - recent_blocks[0].timestamp
+        expected_time = self.target_block_time * (self.adjustment_interval - 1)
+        
+        # Calculate current difficulty
+        current_difficulty = recent_blocks[-1].difficulty
+        
+        # Calculate adjustment ratio
+        adjustment_ratio = expected_time / time_taken
+        
+        # Limit the adjustment to prevent wild swings
+        adjustment_ratio = max(1/self.max_adjustment_factor, 
+                             min(self.max_adjustment_factor, adjustment_ratio))
+        
+        # Calculate new difficulty
+        new_difficulty = max(1, int(current_difficulty * adjustment_ratio))
+        
+        logger.info(f"⚖️ Difficulty adjustment: {current_difficulty} → {new_difficulty} "
+                   f"(blocks took {time_taken:.1f}s, expected {expected_time:.1f}s)")
+        
+        return new_difficulty
+
+# --------------------------------
+# Network Synchronization System
+# --------------------------------
+
+class NetworkSynchronizer:
+    """Handles blockchain synchronization between peers"""
+    
+    def __init__(self, node_instance):
+        self.node = node_instance
+        self.blockchain = node_instance.blockchain
+        self.syncing = False
+        self.sync_thread = None
+        
+    def start_sync(self):
+        """Start blockchain synchronization"""
+        if self.syncing:
+            return
+            
+        self.syncing = True
+        self.sync_thread = threading.Thread(target=self._sync_loop, daemon=True)
+        self.sync_thread.start()
+        logger.info("🔄 Blockchain sync started")
+    
+    def stop_sync(self):
+        """Stop blockchain synchronization"""
+        self.syncing = False
+        if self.sync_thread:
+            self.sync_thread.join(timeout=2)
+        logger.info("🔄 Blockchain sync stopped")
+    
+    def _sync_loop(self):
+        """Main synchronization loop"""
+        while self.syncing:
+            try:
+                if hasattr(self.node, 'discovery') and self.node.discovery:
+                    active_peers = self.node.discovery.get_active_peers()
+                    
+                    if active_peers:
+                        # Request blockchain info from peers
+                        peer_chains = self._query_peer_blockchains(active_peers)
+                        
+                        # Find the longest valid chain
+                        best_chain = self._find_best_chain(peer_chains)
+                        
+                        if best_chain and len(best_chain) > len(self.blockchain.chain):
+                            # Sync to the longer chain
+                            self._sync_to_chain(best_chain)
+                
+                # Sleep before next sync cycle
+                time.sleep(60)
+                
+            except Exception as e:
+                logger.error(f"Sync loop error: {e}")
+                time.sleep(30)
+    
+    def _query_peer_blockchains(self, peers):
+        """Query peers for their blockchain information"""
+        peer_chains = []
+        
+        for peer_addr in peers[:5]:  # Limit to 5 peers to avoid spam
+            try:
+                host, port = peer_addr
+                chain_data = self._request_blockchain_info(host, port)
+                
+                if chain_data:
+                    peer_chains.append({
+                        'peer': peer_addr,
+                        'chain_length': chain_data.get('length', 0),
+                        'latest_hash': chain_data.get('latest_hash', ''),
+                        'blocks': chain_data.get('blocks', [])
+                    })
+                    
+            except Exception as e:
+                logger.debug(f"Blockchain query failed for {peer_addr}: {e}")
+        
+        return peer_chains
+    
+    def _request_blockchain_info(self, host, port, timeout=10):
+        """Request blockchain information from a peer"""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(timeout)
+                sock.connect((host, port))
+                
+                request = {
+                    "type": "blockchain_info_request",
+                    "node_id": self.node.node_id,
+                    "current_length": len(self.blockchain.chain),
+                    "timestamp": time.time()
+                }
+                
+                message = json.dumps(request).encode() + b'\n'
+                sock.send(message)
+                
+                # Receive potentially large response
+                response_data = b''
+                while True:
+                    chunk = sock.recv(8192)
+                    if not chunk:
+                        break
+                    response_data += chunk
+                    if b'\n' in chunk:
+                        break
+                
+                if response_data:
+                    response = json.loads(response_data.decode().strip())
+                    if response.get("type") == "blockchain_info_response":
+                        return response.get("data", {})
+                        
+        except Exception as e:
+            logger.debug(f"Blockchain info request failed for {host}:{port}: {e}")
+            
+        return None
+    
+    def _find_best_chain(self, peer_chains):
+        """Find the best (longest valid) chain among peers"""
+        if not peer_chains:
+            return None
+        
+        # Sort by chain length
+        peer_chains.sort(key=lambda x: x['chain_length'], reverse=True)
+        
+        # Return the longest chain for now (in production, would validate)
+        best_peer_chain = peer_chains[0]
+        
+        if best_peer_chain['chain_length'] > len(self.blockchain.chain):
+            logger.info(f"📈 Found longer chain: {best_peer_chain['chain_length']} blocks "
+                       f"vs our {len(self.blockchain.chain)} blocks")
+            return best_peer_chain['blocks']
+        
+        return None
+    
+    def _sync_to_chain(self, new_chain_blocks):
+        """Synchronize our blockchain to a new chain"""
+        try:
+            logger.info(f"🔄 Syncing to new chain with {len(new_chain_blocks)} blocks")
+            
+            # Validate the new chain (simplified validation)
+            if self._validate_chain(new_chain_blocks):
+                # Replace our chain
+                self.blockchain.chain = []
+                
+                # Add blocks one by one
+                for block_data in new_chain_blocks:
+                    block = Block(
+                        index=block_data['index'],
+                        transactions=block_data['transactions'],
+                        timestamp=block_data['timestamp'],
+                        previous_hash=block_data['previous_hash'],
+                        nonce=block_data.get('nonce', 0),
+                        difficulty=block_data.get('difficulty', 4)
+                    )
+                    block.hash = block_data['hash']
+                    self.blockchain.chain.append(block)
+                
+                # Rebuild UTXO set
+                self.blockchain._rebuild_utxo()
+                
+                logger.info(f"✅ Successfully synced to new chain")
+                
+            else:
+                logger.warning("❌ New chain validation failed")
+                
+        except Exception as e:
+            logger.error(f"Chain sync error: {e}")
+    
+    def _validate_chain(self, chain_blocks):
+        """Validate a blockchain (simplified validation)"""
+        try:
+            # Basic validation - check hashes and structure
+            for i, block_data in enumerate(chain_blocks):
+                if i > 0:
+                    previous_block = chain_blocks[i-1]
+                    if block_data['previous_hash'] != previous_block['hash']:
+                        return False
+                
+                # Validate block hash (simplified)
+                if not block_data.get('hash'):
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Chain validation error: {e}")
+            return False
+
 # Export all classes for use in other modules
 __all__ = [
     'CryptoUtils', 'TransactionInput', 'TransactionOutput', 'Transaction',
     'DataTransaction', 'DSAVerificationTransaction', 'Block', 'Blockchain',
     'Wallet', 'Node', 'CryptoMiningThread', 'CryptoP2PManager',
     'DatabaseManager', 'EnhancedDatabaseManager', 'DatabaseAutoRegistration',
-    'AdStorageManager', 'EnhancedAdFetcher', 'EnhancedDeveloperRegistration',
+    'NodeDiscovery', 'DifficultyAdjustment', 'NetworkSynchronizer',
+    'EnhancedDeveloperRegistration',
     'logger'
 ]

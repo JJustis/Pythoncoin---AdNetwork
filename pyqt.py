@@ -599,6 +599,149 @@ except ImportError:
 from decimal import Decimal
 from urllib.parse import urlparse, parse_qs
 
+class CentralLedgerManager:
+    """Manages connection to local adnetwrk database for ad click tracking"""
+    
+    def __init__(self):
+        self.central_config = {
+            'host': 'localhost',
+            'database': 'adnetwrk',
+            'user': 'root',
+            'password': '',
+            'port': 3306
+        }
+        self.connection = None
+        self.is_connected = False
+        self.ledger_updates = []
+        
+    def connect_to_central_db(self):
+        """Connect to the local adnetwrk database"""
+        try:
+            if MYSQL_AVAILABLE:
+                self.connection = mysql.connector.connect(
+                    host=self.central_config['host'],
+                    database=self.central_config['database'],
+                    user=self.central_config['user'],
+                    password=self.central_config['password'],
+                    port=self.central_config['port'],
+                    autocommit=True,
+                    charset='utf8mb4',
+                    connection_timeout=10
+                )
+                self.is_connected = True
+                logger.info("✅ Connected to ad_clicks database")
+                return True
+            else:
+                logger.error("❌ MySQL connector not available")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Ad clicks database connection failed: {e}")
+            self.is_connected = False
+            return False
+    
+    def fetch_ledger_updates(self):
+        """Fetch all ad clicks from the ad_clicks table with developer info"""
+        if not self.is_connected and not self.connect_to_central_db():
+            return []
+        
+        try:
+            cursor = self.connection.cursor(dictionary=True)
+            query = """
+                SELECT ac.id, ac.ad_id as transaction_hash, 
+                       d.pythoncoin_address as wallet_address, 
+                       ac.payout_amount as amount, 'credit' as transaction_type,
+                       ac.click_time as timestamp, 
+                       CASE WHEN ac.processed = 1 THEN 'confirmed' ELSE 'pending' END as status, 
+                       ac.zone, d.username as developer_name,
+                       ac.client_id, ac.ip_address, ac.user_agent
+                FROM ad_clicks ac
+                LEFT JOIN developers d ON ac.developer_id = d.id
+                ORDER BY ac.click_time DESC 
+                LIMIT 1000
+            """
+            
+            logger.info("Executing ad_clicks query...")
+            cursor.execute(query)
+            updates = cursor.fetchall()
+            cursor.close()
+            
+            logger.info(f"Query returned {len(updates)} rows")
+            if updates:
+                logger.info(f"Sample record: ID={updates[0].get('id')}, Developer={updates[0].get('developer_name')}")
+            
+            self.ledger_updates = updates
+            return updates
+            
+        except Exception as e:
+            logger.error(f"❌ Error fetching ad clicks: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
+            return []
+    
+    def create_ledger_entry(self, wallet_address, amount, transaction_type, transaction_hash, metadata=None):
+        """Create a new ad click entry"""
+        if not self.is_connected and not self.connect_to_central_db():
+            return False
+        
+        try:
+            cursor = self.connection.cursor()
+            
+            # Extract metadata for ad_clicks table
+            meta = metadata or {}
+            ad_id = meta.get('ad_id', transaction_hash)
+            developer = meta.get('developer', '')
+            zone = meta.get('zone', 'default')
+            client_id = meta.get('client_id', '')
+            
+            query = """
+                INSERT INTO ad_clicks 
+                (ad_id, developer_address, developer_name, payout_amount, zone, client_id, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+            """
+            
+            cursor.execute(query, (ad_id, wallet_address, developer, amount, zone, client_id))
+            cursor.close()
+            
+            logger.info(f"📝 Created ad click entry: {amount} PYC for {wallet_address}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating ad click entry: {e}")
+            return False
+    
+    def get_wallet_balance_from_ledger(self, wallet_address):
+        """Get wallet balance from ad clicks"""
+        if not self.is_connected and not self.connect_to_central_db():
+            return 0.0
+        
+        try:
+            cursor = self.connection.cursor()
+            query = """
+                SELECT SUM(payout_amount) as total_earnings
+                FROM ad_clicks 
+                WHERE developer_address = %s AND status IN ('pending', 'confirmed')
+            """
+            cursor.execute(query, (wallet_address,))
+            result = cursor.fetchone()
+            cursor.close()
+            
+            balance = result[0] if result and result[0] else 0.0
+            return float(balance)
+            
+        except Exception as e:
+            logger.error(f"❌ Error getting wallet balance: {e}")
+            return 0.0
+    
+    def disconnect(self):
+        """Disconnect from ad clicks database"""
+        if self.connection:
+            try:
+                self.connection.close()
+                self.is_connected = False
+                logger.info("🔌 Disconnected from ad clicks database")
+            except:
+                pass
+
 @dataclass
 class AdContent:
     id: str
@@ -1409,6 +1552,14 @@ class WorkingDeveloperPortalServer:
                             "message": "Server is running and accepting connections",
                             "endpoints": list(server_instance.router.keys())
                         })
+                    elif path.startswith('/svg/'):
+                        # Handle SVG requests for ads
+                        ad_id = path[5:]  # Remove '/svg/' prefix
+                        server_instance._handle_get_svg(self, ad_id)
+                    elif path.startswith('/html/'):
+                        # Handle HTML requests for ads
+                        ad_id = path[6:]  # Remove '/html/' prefix
+                        server_instance._handle_get_html(self, ad_id)
                     else:
                         self._send_json_response({
                             "success": False, 
@@ -1581,13 +1732,103 @@ class WorkingDeveloperPortalServer:
                 "error": str(e)
             })
 
+    def _handle_get_svg(self, handler, ad_id):
+        """Handle SVG requests for specific ads"""
+        try:
+            # Find the SVG file in storage
+            if hasattr(self, 'wallet_instance') and self.wallet_instance:
+                if hasattr(self.wallet_instance, 'ad_storage'):
+                    storage_base = self.wallet_instance.ad_storage.base_dir
+                    svg_file = storage_base / "active" / f"{ad_id}_svg.svg"
+                    
+                    if svg_file.exists():
+                        handler.send_response(200)
+                        handler.send_header('Content-Type', 'image/svg+xml')
+                        handler.send_header('Cache-Control', 'public, max-age=3600')
+                        handler.send_header('Access-Control-Allow-Origin', '*')
+                        handler.end_headers()
+                        
+                        with open(svg_file, 'rb') as f:
+                            handler.wfile.write(f.read())
+                        return
+            
+            # Fallback: generate a default SVG
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'image/svg+xml')
+            handler.send_header('Cache-Control', 'public, max-age=300')
+            handler.send_header('Access-Control-Allow-Origin', '*')
+            handler.end_headers()
+            
+            default_svg = f'''<svg width="400" height="280" xmlns="http://www.w3.org/2000/svg">
+    <rect width="400" height="280" fill="#f0f9ff" stroke="#0066cc" stroke-width="2"/>
+    <text x="200" y="140" text-anchor="middle" font-family="Arial" font-size="16" fill="#0066cc">
+        PythonCoin Ad
+    </text>
+    <text x="200" y="170" text-anchor="middle" font-family="Arial" font-size="12" fill="#666">
+        Ad ID: {ad_id[:16]}...
+    </text>
+</svg>'''
+            handler.wfile.write(default_svg.encode())
+            
+        except Exception as e:
+            logger.error(f"SVG handler error: {e}")
+            handler.send_response(500)
+            handler.send_header('Content-Type', 'text/plain')
+            handler.end_headers()
+            handler.wfile.write(f"Error serving SVG: {str(e)}".encode())
+
+    def _handle_get_html(self, handler, ad_id):
+        """Handle HTML requests for specific ads"""
+        try:
+            # Find the HTML file in storage
+            if hasattr(self, 'wallet_instance') and self.wallet_instance:
+                if hasattr(self.wallet_instance, 'ad_storage'):
+                    storage_base = self.wallet_instance.ad_storage.base_dir
+                    html_file = storage_base / "active" / f"{ad_id}_html.html"
+                    
+                    if html_file.exists():
+                        handler.send_response(200)
+                        handler.send_header('Content-Type', 'text/html')
+                        handler.send_header('Cache-Control', 'public, max-age=3600')
+                        handler.send_header('Access-Control-Allow-Origin', '*')
+                        handler.end_headers()
+                        
+                        with open(html_file, 'rb') as f:
+                            handler.wfile.write(f.read())
+                        return
+            
+            # Fallback: generate a default HTML
+            handler.send_response(200)
+            handler.send_header('Content-Type', 'text/html')
+            handler.send_header('Cache-Control', 'public, max-age=300')
+            handler.send_header('Access-Control-Allow-Origin', '*')
+            handler.end_headers()
+            
+            default_html = f'''<!DOCTYPE html>
+<html><head><title>PythonCoin Ad</title></head>
+<body style="margin:0;padding:20px;text-align:center;font-family:Arial;">
+    <h2>PythonCoin Network Ad</h2>
+    <p>Ad ID: {ad_id}</p>
+    <p>Ad content not found</p>
+</body></html>'''
+            handler.wfile.write(default_html.encode())
+            
+        except Exception as e:
+            logger.error(f"HTML handler error: {e}")
+            handler.send_response(500)
+            handler.send_header('Content-Type', 'text/plain')
+            handler.end_headers()
+            handler.wfile.write(f"Error serving HTML: {str(e)}".encode())
+
     def _get_sample_ads(self):
         try:
+            formatted_ads = []
+            
+            # First try to get ads from the wallet instance's ad fetcher
             if hasattr(self, 'wallet_instance') and self.wallet_instance:
                 if hasattr(self.wallet_instance, 'ad_fetcher'):
                     real_ads = self.wallet_instance.ad_fetcher.get_real_ads(limit=10)
                     
-                    formatted_ads = []
                     for ad in real_ads:
                         formatted_ad = {
                             "id": ad['id'],
@@ -1600,9 +1841,43 @@ class WorkingDeveloperPortalServer:
                             "target_url": ad['click_url']
                         }
                         formatted_ads.append(formatted_ad)
-                    
-                    if formatted_ads:
-                        return formatted_ads
+                
+                # Also try to get ads from the wallet's ads list (created ads)
+                if hasattr(self.wallet_instance, 'ads') and self.wallet_instance.ads:
+                    for ad in self.wallet_instance.ads:
+                        formatted_ad = {
+                            "id": ad.id,
+                            "client_id": "local",
+                            "title": ad.title,
+                            "description": ad.description,
+                            "category": ad.category,
+                            "payout": ad.payout_rate,
+                            "svg_url": f"http://{self.host}:{self.port}/svg/{ad.id}",
+                            "target_url": ad.click_url
+                        }
+                        formatted_ads.append(formatted_ad)
+                
+                # Try to load ads directly from storage if we still don't have any
+                if not formatted_ads and hasattr(self.wallet_instance, 'ad_storage'):
+                    try:
+                        stored_ads = self.wallet_instance.ad_storage.load_all_ads()
+                        for ad_meta in stored_ads:
+                            formatted_ad = {
+                                "id": ad_meta['id'],
+                                "client_id": "storage",
+                                "title": ad_meta['title'],
+                                "description": ad_meta['description'],
+                                "category": ad_meta['category'],
+                                "payout": ad_meta['payout_rate'],
+                                "svg_url": f"http://{self.host}:{self.port}/svg/{ad_meta['id']}",
+                                "target_url": ad_meta['click_url']
+                            }
+                            formatted_ads.append(formatted_ad)
+                    except Exception as e:
+                        logger.warning(f"Failed to load ads from storage: {e}")
+                
+                if formatted_ads:
+                    return formatted_ads
             
             return [
                 {
@@ -1984,6 +2259,12 @@ class RobustPythonCoinHandler(BaseHTTPRequestHandler):
                         'timestamp': datetime.now().isoformat()
                     }
                     self.wallet_instance.on_enhanced_portal_click_received(click_data_enhanced)
+                
+                # Trigger refresh of ad clicks data (dashboard8.php already handles insertion)
+                if hasattr(self.wallet_instance, 'central_ledger'):
+                    # Schedule a refresh of the ledger display to show the new click
+                    from PyQt5.QtCore import QTimer
+                    QTimer.singleShot(1000, self.wallet_instance.sync_central_ledger)
             
             return json.dumps({
                 'success': True,
@@ -5256,6 +5537,40 @@ class AdStorageManager:
         
         return False
     
+    def delete_ad(self, ad_id):
+        """Delete advertisement and all associated files"""
+        try:
+            deleted_files = []
+            
+            # Delete from active directory
+            active_dir = self.base_dir / "active"
+            for pattern in [f"{ad_id}_*.html", f"{ad_id}_*.svg", f"{ad_id}_*.mp4", f"{ad_id}_*.jpg", f"{ad_id}_*.png", f"{ad_id}_*.gif", f"{ad_id}_*.txt", f"{ad_id}_meta.json"]:
+                for file_path in active_dir.glob(pattern):
+                    file_path.unlink()
+                    deleted_files.append(str(file_path))
+            
+            # Delete any media files in assets directory
+            assets_dir = self.base_dir / "assets"
+            for subdir in ["images", "videos", "documents"]:
+                asset_dir = assets_dir / subdir
+                if asset_dir.exists():
+                    for file_path in asset_dir.glob(f"{ad_id}.*"):
+                        file_path.unlink()
+                        deleted_files.append(str(file_path))
+            
+            return {
+                'success': True,
+                'deleted_files': deleted_files,
+                'message': f"Successfully deleted ad {ad_id} and {len(deleted_files)} associated files"
+            }
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'message': f"Failed to delete ad {ad_id}: {str(e)}"
+            }
+    
     def get_storage_stats(self):
         """Get comprehensive storage statistics"""
         try:
@@ -5566,6 +5881,10 @@ class UnifiedPythonCoinWallet(QMainWindow):
         self.db_connected = False
         self.db_registration = None
         
+        # Central ledger manager for secupgrade.com
+        self.central_ledger = CentralLedgerManager()
+        self.ledger_updates = []
+        
         # Core components
         self.blockchain = None
         self.wallet = None
@@ -5647,6 +5966,9 @@ class UnifiedPythonCoinWallet(QMainWindow):
         
         QTimer.singleShot(1000, self.delayed_initial_update)
         self.setup_auto_save_timer()
+        
+        # Setup central ledger sync
+        QTimer.singleShot(5000, self.setup_central_ledger_sync)
         
         # Initialize enhanced ad system
         QTimer.singleShot(3000, self.initialize_enhanced_ad_system)
@@ -6602,6 +6924,41 @@ class UnifiedPythonCoinWallet(QMainWindow):
         peers_group.setLayout(peers_layout)
         network_layout.addWidget(peers_group)
         
+        # Central ledger updates display
+        ledger_group = QGroupBox("💳 Ad Click Tracking")
+        ledger_layout = QVBoxLayout()
+        
+        # Ledger status
+        self.ledger_status = QLabel("Status: Connecting to ad clicks database...")
+        self.ledger_status.setFont(QFont('Arial', 10, QFont.Weight.Bold))
+        ledger_layout.addWidget(self.ledger_status)
+        
+        # Ledger updates table
+        self.ledger_table = QTableWidget()
+        self.ledger_table.setColumnCount(7)
+        self.ledger_table.setHorizontalHeaderLabels([
+            "Timestamp", "Developer", "Ad ID", "Amount", "Zone", "Client ID", "Status"
+        ])
+        self.ledger_table.setMaximumHeight(200)
+        self.ledger_table.setAlternatingRowColors(True)
+        ledger_layout.addWidget(self.ledger_table)
+        
+        # Ledger controls
+        ledger_controls = QHBoxLayout()
+        
+        self.refresh_ledger_btn = QPushButton("🔄 Refresh Ledger")
+        self.refresh_ledger_btn.clicked.connect(self.sync_central_ledger)
+        ledger_controls.addWidget(self.refresh_ledger_btn)
+        
+        self.ledger_count_label = QLabel("Clicks: 0")
+        ledger_controls.addWidget(self.ledger_count_label)
+        
+        ledger_controls.addStretch()
+        ledger_layout.addLayout(ledger_controls)
+        
+        ledger_group.setLayout(ledger_layout)
+        network_layout.addWidget(ledger_group)
+        
         # Network log
         network_log_group = QGroupBox("📡 Network Log")
         network_log_layout = QVBoxLayout()
@@ -6634,6 +6991,17 @@ class UnifiedPythonCoinWallet(QMainWindow):
         # Ad details form
         form_group = QGroupBox("🎯 Create New Advertisement")
         form_layout = QFormLayout()
+        
+        # Ad format selection dropdown
+        self.ad_format_combo = QComboBox()
+        self.ad_format_combo.addItems([
+            "🎬 Video Ad (.mp4)",
+            "🖼️ Picture Ad (.jpg/.png/.gif)", 
+            "📝 Text Ad (.txt)",
+            "📺 SVG Ad (.svg)"
+        ])
+        self.ad_format_combo.currentTextChanged.connect(self.on_ad_format_changed)
+        form_layout.addRow("Ad Format:", self.ad_format_combo)
         
         self.ad_title_input = QLineEdit()
         self.ad_title_input.setPlaceholderText("Enter catchy ad title...")
@@ -6674,29 +7042,57 @@ class UnifiedPythonCoinWallet(QMainWindow):
         form_group.setLayout(form_layout)
         left_layout.addWidget(form_group)
         
-        # Image upload section
-        image_group = QGroupBox("🖼️ Ad Image")
-        image_layout = QVBoxLayout()
+        # Media upload section (dynamic based on format)
+        self.media_group = QGroupBox("📁 Ad Content")
+        media_layout = QVBoxLayout()
         
-        self.upload_image_btn = QPushButton("📁 Upload Image")
-        self.upload_image_btn.clicked.connect(self.upload_ad_image)
-        image_layout.addWidget(self.upload_image_btn)
+        self.upload_media_btn = QPushButton("📁 Upload Media")
+        self.upload_media_btn.clicked.connect(self.upload_ad_media)
+        media_layout.addWidget(self.upload_media_btn)
         
-        self.image_path_label = QLabel("No image selected")
-        self.image_path_label.setWordWrap(True)
-        self.image_path_label.setStyleSheet("color: #666; font-style: italic;")
-        image_layout.addWidget(self.image_path_label)
+        self.media_path_label = QLabel("No media selected")
+        self.media_path_label.setWordWrap(True)
+        self.media_path_label.setStyleSheet("color: #666; font-style: italic;")
+        media_layout.addWidget(self.media_path_label)
         
-        # Image preview
-        self.image_preview_label = QLabel()
-        self.image_preview_label.setFixedSize(150, 100)
-        self.image_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.image_preview_label.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; background: #f8f9fa;")
-        self.image_preview_label.setText("Image Preview")
-        image_layout.addWidget(self.image_preview_label)
+        # Content input area (for text/SVG content)
+        self.content_input = QTextEdit()
+        self.content_input.setPlaceholderText("Enter ad content here...")
+        self.content_input.setMaximumHeight(120)
+        self.content_input.hide()  # Initially hidden
+        media_layout.addWidget(self.content_input)
         
-        image_group.setLayout(image_layout)
-        left_layout.addWidget(image_group)
+        # Media preview
+        self.media_preview_label = QLabel()
+        self.media_preview_label.setFixedSize(150, 100)
+        self.media_preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.media_preview_label.setStyleSheet("border: 1px solid #ccc; border-radius: 4px; background: #f8f9fa;")
+        self.media_preview_label.setText("Media Preview")
+        media_layout.addWidget(self.media_preview_label)
+        
+        # Optional overlay/styling section
+        self.overlay_group = QGroupBox("🎨 Optional Overlay/Styling")
+        overlay_layout = QVBoxLayout()
+        
+        self.use_overlay_check = QCheckBox("Add HTML overlay/styling")
+        self.use_overlay_check.stateChanged.connect(self.toggle_overlay_input)
+        overlay_layout.addWidget(self.use_overlay_check)
+        
+        self.overlay_input = QTextEdit()
+        self.overlay_input.setPlaceholderText("Enter HTML overlay code (for video/picture) or styling (for text)...")
+        self.overlay_input.setMaximumHeight(80)
+        self.overlay_input.hide()
+        overlay_layout.addWidget(self.overlay_input)
+        
+        self.overlay_group.setLayout(overlay_layout)
+        media_layout.addWidget(self.overlay_group)
+        
+        self.media_group.setLayout(media_layout)
+        left_layout.addWidget(self.media_group)
+        
+        # Initialize format-specific UI (default to Picture Ad)
+        self.selected_media_path = None
+        self.on_ad_format_changed()  # Set initial state
         
         # Targeting options
         targeting_group = QGroupBox("🎯 Targeting Options")
@@ -7075,6 +7471,120 @@ class UnifiedPythonCoinWallet(QMainWindow):
             
         except Exception as e:
             self.log_message(f"❌ Database maintenance error: {str(e)}")
+    
+    def setup_central_ledger_sync(self):
+        """Setup periodic sync with ad clicks database"""
+        try:
+            if not hasattr(self, 'ledger_sync_timer'):
+                self.ledger_sync_timer = QTimer()
+                self.ledger_sync_timer.timeout.connect(self.sync_central_ledger)
+                self.ledger_sync_timer.start(30000)  # Every 30 seconds
+                self.log_message("✅ Ad clicks sync timer started (30 second intervals)")
+                
+                # Perform initial sync
+                QTimer.singleShot(2000, self.sync_central_ledger)
+            
+        except Exception as e:
+            self.log_message(f"❌ Error setting up ad clicks sync: {str(e)}")
+    
+    def sync_central_ledger(self):
+        """Fetch and display ad clicks from database"""
+        try:
+            if hasattr(self, 'central_ledger'):
+                self.log_message("🔄 Attempting to sync ad clicks...")
+                self.ledger_updates = self.central_ledger.fetch_ledger_updates()
+                if self.ledger_updates:
+                    self.log_message(f"📊 Synced {len(self.ledger_updates)} ad clicks from database")
+                    # Update UI with ad clicks data
+                    self.update_ledger_display()
+                else:
+                    self.log_message("⚠️ No ad clicks returned from database")
+            else:
+                self.log_message("❌ central_ledger not available")
+        except Exception as e:
+            self.log_message(f"❌ Ad clicks sync error: {str(e)}")
+            import traceback
+            self.log_message(f"❌ Full error: {traceback.format_exc()}")
+    
+    def update_ledger_display(self):
+        """Update UI to show latest ledger information"""
+        try:
+            if hasattr(self, 'ledger_table') and hasattr(self, 'ledger_updates') and self.ledger_updates:
+                # Clear existing table data
+                self.ledger_table.setRowCount(0)
+                
+                # Update status
+                count = len(self.ledger_updates)
+                self.ledger_status.setText(f"Status: Connected - Showing {count} recent ad clicks")
+                self.ledger_count_label.setText(f"Clicks: {count}")
+                
+                # Populate table with recent updates (up to 50)
+                recent_count = min(50, count)
+                self.ledger_table.setRowCount(recent_count)
+                
+                for i, update in enumerate(self.ledger_updates[:recent_count]):
+                    # Timestamp
+                    timestamp = str(update.get('timestamp', ''))[:19]  # YYYY-MM-DD HH:MM:SS
+                    self.ledger_table.setItem(i, 0, QTableWidgetItem(timestamp))
+                    
+                    # Developer (truncated wallet address and name)
+                    wallet_addr = update.get('wallet_address', '')
+                    dev_name = update.get('developer_name', '')
+                    if dev_name:
+                        developer_display = f"{dev_name} ({wallet_addr[:8]}...)"
+                    else:
+                        developer_display = wallet_addr[:10] + '...' + wallet_addr[-6:] if len(wallet_addr) > 16 else wallet_addr
+                    self.ledger_table.setItem(i, 1, QTableWidgetItem(developer_display))
+                    
+                    # Ad ID (transaction hash)
+                    ad_id = update.get('transaction_hash', '')
+                    ad_display = ad_id[:16] + '...' if len(ad_id) > 16 else ad_id
+                    self.ledger_table.setItem(i, 2, QTableWidgetItem(ad_display))
+                    
+                    # Amount
+                    amount = update.get('amount', 0)
+                    amount_str = f"{float(amount):.8f} PYC"
+                    amount_item = QTableWidgetItem(amount_str)
+                    amount_item.setBackground(QColor(200, 255, 200))  # Light green for earnings
+                    self.ledger_table.setItem(i, 3, amount_item)
+                    
+                    # Zone
+                    zone = update.get('zone', 'default')
+                    self.ledger_table.setItem(i, 4, QTableWidgetItem(zone))
+                    
+                    # Client ID
+                    client_id = update.get('client_id', '')
+                    client_display = client_id[:12] + '...' if len(client_id) > 12 else client_id
+                    self.ledger_table.setItem(i, 5, QTableWidgetItem(client_display))
+                    
+                    # Status
+                    status = update.get('status', 'unknown')
+                    status_item = QTableWidgetItem(status.upper())
+                    if status == 'confirmed':
+                        status_item.setBackground(QColor(200, 255, 200))  # Light green
+                    elif status == 'pending':
+                        status_item.setBackground(QColor(255, 255, 200))  # Light yellow
+                    else:
+                        status_item.setBackground(QColor(255, 200, 200))  # Light red
+                    self.ledger_table.setItem(i, 6, status_item)
+                
+                # Resize columns to content
+                self.ledger_table.resizeColumnsToContents()
+                
+                # Log summary
+                self.log_message(f"💰 Updated ad clicks display with {recent_count} click events")
+            else:
+                # No updates available
+                if hasattr(self, 'ledger_status'):
+                    self.ledger_status.setText("Status: No ad clicks available")
+                if hasattr(self, 'ledger_count_label'):
+                    self.ledger_count_label.setText("Clicks: 0")
+                    
+        except Exception as e:
+            self.log_message(f"❌ Error updating ledger display: {str(e)}")
+            if hasattr(self, 'ledger_status'):
+                self.ledger_status.setText(f"Status: Error - {str(e)}")
+    
     def populate_client_data(self):
         """Populate client data in database on startup"""
         try:
@@ -7803,7 +8313,7 @@ class UnifiedPythonCoinWallet(QMainWindow):
                 'category': category,
                 'click_url': click_url if click_url.startswith(('http://', 'https://')) else f"https://{click_url}",
                 'payout_rate': payout,
-                'image_url': getattr(self, 'current_ad_image', ''),
+                'image_url': getattr(self, 'current_ad_media', ''),
                 'advertiser_address': self.wallet.address if self.wallet else 'preview_address'
             }
             
@@ -7918,23 +8428,160 @@ class UnifiedPythonCoinWallet(QMainWindow):
         )
         
         if file_path:
-            self.current_ad_image = file_path
+            self.current_ad_media = file_path
             filename = os.path.basename(file_path)
-            self.image_path_label.setText(f"Selected: {filename}")
-            self.image_path_label.setStyleSheet("color: #28a745; font-weight: bold;")
+            if hasattr(self, 'media_path_label'):
+                self.media_path_label.setText(f"Selected: {filename}")
+                self.media_path_label.setStyleSheet("color: #28a745; font-weight: bold;")
             
             # Show image preview
             try:
                 pixmap = QPixmap(file_path)
                 if not pixmap.isNull():
                     scaled_pixmap = pixmap.scaled(150, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    self.image_preview_label.setPixmap(scaled_pixmap)
-                    self.image_preview_label.setText("")
+                    self.media_preview_label.setPixmap(scaled_pixmap)
+                    self.media_preview_label.setText("")
                 else:
-                    self.image_preview_label.setText("Invalid Image")
+                    self.media_preview_label.setText("Invalid Image")
             except Exception as e:
-                self.image_preview_label.setText("Preview Error")
+                self.media_preview_label.setText("Preview Error")
                 logger.warning(f"Image preview error: {e}")
+    
+    def on_ad_format_changed(self):
+        """Handle ad format selection change"""
+        selected_format = self.ad_format_combo.currentText()
+        
+        # Update UI based on selected format
+        if "Video Ad" in selected_format:
+            self.media_group.setTitle("🎬 Video Content")
+            self.upload_media_btn.setText("📁 Upload Video (.mp4)")
+            self.content_input.hide()
+            self.upload_media_btn.show()
+            self.overlay_group.show()
+            self.use_overlay_check.setText("Add text overlay")
+            self.overlay_input.setPlaceholderText("Enter HTML overlay for video (positioned text, buttons, etc.)...")
+            
+        elif "Picture Ad" in selected_format:
+            self.media_group.setTitle("🖼️ Image Content")
+            self.upload_media_btn.setText("📁 Upload Image (.jpg/.png/.gif)")
+            self.content_input.hide()
+            self.upload_media_btn.show()
+            self.overlay_group.show()
+            self.use_overlay_check.setText("Add text overlay")
+            self.overlay_input.setPlaceholderText("Enter HTML overlay for image (captions, buttons, etc.)...")
+            
+        elif "Text Ad" in selected_format:
+            self.media_group.setTitle("📝 Text Content")
+            self.upload_media_btn.hide()
+            self.content_input.show()
+            self.content_input.setPlaceholderText("Enter your ad text content here...")
+            self.overlay_group.show()
+            self.use_overlay_check.setText("Add custom styling")
+            self.overlay_input.setPlaceholderText("Enter HTML styling (use {{text}} as placeholder for your content)...")
+            
+        elif "SVG Ad" in selected_format:
+            self.media_group.setTitle("📺 SVG Content")
+            self.upload_media_btn.hide()
+            self.content_input.show()
+            self.content_input.setPlaceholderText("Enter SVG markup here (complete <svg>...</svg> code)...")
+            self.overlay_group.show()
+            self.use_overlay_check.setText("Add HTML component")
+            self.overlay_input.setPlaceholderText("Enter HTML component for interactive elements...")
+        
+        # Update media path label
+        self.media_path_label.setText("No media selected")
+        self.media_preview_label.setText("Media Preview")
+        
+        # Reset overlay checkbox
+        self.use_overlay_check.setChecked(False)
+        self.overlay_input.hide()
+        
+        self.log_message(f"📝 Ad format changed to: {selected_format}")
+    
+    def toggle_overlay_input(self, state):
+        """Toggle overlay input visibility"""
+        if state == 2:  # Checked
+            self.overlay_input.show()
+        else:
+            self.overlay_input.hide()
+    
+    def upload_ad_media(self):
+        """Upload media file based on selected format"""
+        selected_format = self.ad_format_combo.currentText()
+        
+        if "Video Ad" in selected_format:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select Video File", "", "Video Files (*.mp4)")
+            if file_path:
+                # Validate file size (max 10MB for video)
+                file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
+                if file_size > 10:
+                    QMessageBox.warning(self, "File Too Large", "Video file must be under 10MB")
+                    return
+                
+                self.selected_media_path = file_path
+                self.media_path_label.setText(f"Video: {os.path.basename(file_path)} ({file_size:.1f}MB)")
+                self.media_preview_label.setText("🎬\nVideo Selected")
+                self.log_message(f"📹 Video selected: {os.path.basename(file_path)}")
+                
+        elif "Picture Ad" in selected_format:
+            file_path, _ = QFileDialog.getOpenFileName(
+                self, "Select Image File", "", "Image Files (*.jpg *.jpeg *.png *.gif)")
+            if file_path:
+                # Validate file size (max 5MB for images)
+                file_size = os.path.getsize(file_path) / (1024 * 1024)  # MB
+                if file_size > 5:
+                    QMessageBox.warning(self, "File Too Large", "Image file must be under 5MB")
+                    return
+                
+                self.selected_media_path = file_path
+                self.media_path_label.setText(f"Image: {os.path.basename(file_path)} ({file_size:.1f}MB)")
+                
+                # Show image preview
+                try:
+                    pixmap = QPixmap(file_path)
+                    if not pixmap.isNull():
+                        scaled_pixmap = pixmap.scaled(150, 100, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                        self.media_preview_label.setPixmap(scaled_pixmap)
+                except Exception as e:
+                    self.media_preview_label.setText("🖼️\nImage Selected")
+                
+                self.log_message(f"🖼️ Image selected: {os.path.basename(file_path)}")
+    
+    def get_ad_type_from_format(self, format_text):
+        """Convert format selection to ad type"""
+        if "Video Ad" in format_text:
+            return "video"
+        elif "Picture Ad" in format_text:
+            return "picture"
+        elif "Text Ad" in format_text:
+            return "text"
+        elif "SVG Ad" in format_text:
+            return "svg"
+        return "picture"  # Default fallback
+    
+    def validate_ad_format_content(self, ad_type):
+        """Validate ad content based on type"""
+        errors = []
+        
+        if ad_type in ["video", "picture"]:
+            # Require uploaded media file
+            if not hasattr(self, 'selected_media_path') or not self.selected_media_path:
+                errors.append(f"Please upload a {ad_type} file")
+            elif not os.path.exists(self.selected_media_path):
+                errors.append(f"Selected {ad_type} file no longer exists")
+                
+        elif ad_type in ["text", "svg"]:
+            # Require content in text area
+            content = self.content_input.toPlainText().strip()
+            if not content:
+                errors.append(f"Please enter {ad_type} content")
+            elif ad_type == "svg" and "<svg" not in content.lower():
+                errors.append("SVG content must contain <svg> tag")
+            elif ad_type == "text" and len(content) < 10:
+                errors.append("Text content must be at least 10 characters")
+        
+        return errors
     
     def create_advertisement(self):
         """Enhanced advertisement creation with HTML/SVG storage and validation"""
@@ -8028,13 +8675,25 @@ class UnifiedPythonCoinWallet(QMainWindow):
             progress.setLabelText("Preparing advertisement files...")
             QApplication.processEvents()
             
+            # Get ad format and validate content
+            selected_format = self.ad_format_combo.currentText()
+            ad_type = self.get_ad_type_from_format(selected_format)
+            
+            # Validate format-specific requirements
+            format_validation_errors = self.validate_ad_format_content(ad_type)
+            if format_validation_errors:
+                progress.close()
+                QMessageBox.warning(self, "Format Validation Errors", "\n".join(format_validation_errors))
+                return
+            
             ad_data = {
                 'id': ad_id,
                 'title': title,
                 'description': description,
-                'image_url': getattr(self, 'current_ad_image', ''),
                 'click_url': click_url,
                 'category': category,
+                'ad_type': ad_type,
+                'ad_format': selected_format,
                 'targeting': targeting,
                 'created_at': datetime.now().isoformat(),
                 'expires_at': (datetime.now() + timedelta(days=30)).isoformat(),
@@ -8212,8 +8871,8 @@ Your advertisement is now live and ready to earn PYC!"""
             ad_id = str(uuid.uuid4())
             
             image_url = ""
-            if hasattr(self, 'current_ad_image'):
-                image_url = f"file://{self.current_ad_image}"  # Local file for demo
+            if hasattr(self, 'current_ad_media'):
+                image_url = f"file://{self.current_ad_media}"  # Local file for demo
             
 
             interests = [i.strip() for i in self.target_interests.text().split(',') if i.strip()]
@@ -8279,12 +8938,12 @@ Your advertisement is now live and ready to earn PYC!"""
         self.ad_payout_input.setValue(0.00100000)
         self.daily_budget_input.setValue(1.0)
         self.max_clicks_input.setValue(1000)
-        self.image_path_label.setText("No image selected")
-        self.image_path_label.setStyleSheet("color: #666; font-style: italic;")
-        self.image_preview_label.clear()
-        self.image_preview_label.setText("Image Preview")
-        if hasattr(self, 'current_ad_image'):
-            delattr(self, 'current_ad_image')
+        self.media_path_label.setText("No media selected")
+        self.media_path_label.setStyleSheet("color: #666; font-style: italic;")
+        self.media_preview_label.clear()
+        self.media_preview_label.setText("Media Preview")
+        if hasattr(self, 'current_ad_media'):
+            delattr(self, 'current_ad_media')
         self.ad_preview_area.setHtml(self.get_default_preview_html())
     
     def broadcast_new_ad(self, ad):
@@ -8433,15 +9092,49 @@ Your advertisement is now live and ready to earn PYC!"""
             ad_to_remove = my_ads[current_row]
             
             reply = QMessageBox.question(self, "Confirm Delete", 
-                                       f"Are you sure you want to delete '{ad_to_remove.title}'?"
+                                       f"Are you sure you want to delete '{ad_to_remove.title}'?\n"
+                                       f"This will permanently remove the ad and all associated files.\n"
                                        f"This action cannot be undone.",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             
             if reply == QMessageBox.StandardButton.Yes:
-                self.ads.remove(ad_to_remove)
-                self.update_my_ads_table()
-                QMessageBox.information(self, "Ad Deleted", "Advertisement has been deleted")
-                self.log_message(f"Deleted advertisement: {ad_to_remove.title}")
+                # Delete files from storage using the ad storage manager
+                deletion_result = self.ad_storage.delete_ad(ad_to_remove.id)
+                
+                if deletion_result['success']:
+                    # Remove from in-memory list
+                    self.ads.remove(ad_to_remove)
+                    
+                    # Update the table display
+                    self.update_my_ads_table()
+                    
+                    # Clear the form
+                    self.clear_ad_form()
+                    
+                    # Show success message with details
+                    deleted_count = len(deletion_result['deleted_files'])
+                    QMessageBox.information(self, "Ad Deleted", 
+                                          f"Advertisement '{ad_to_remove.title}' has been deleted successfully.\n"
+                                          f"Removed {deleted_count} file(s) from storage.")
+                    
+                    self.log_message(f"✅ Deleted advertisement: {ad_to_remove.title} (ID: {ad_to_remove.id})")
+                    if deletion_result['deleted_files']:
+                        self.log_message(f"🗑️ Deleted files: {', '.join(deletion_result['deleted_files'])}")
+                    else:
+                        self.log_message(f"🗑️ No files found to delete for ad ID: {ad_to_remove.id}")
+                        
+                else:
+                    # Show error message if file deletion failed
+                    QMessageBox.warning(self, "Deletion Error", 
+                                      f"Failed to delete ad files: {deletion_result.get('error', 'Unknown error')}\n"
+                                      f"The ad was removed from the list but files may still exist.")
+                    
+                    # Still remove from memory since user requested deletion
+                    self.ads.remove(ad_to_remove)
+                    self.update_my_ads_table()
+                    self.clear_ad_form()
+                    
+                    self.log_message(f"⚠️ Partially deleted advertisement: {ad_to_remove.title} - {deletion_result.get('error', 'File deletion failed')}")
     # ============================================================================
     # Blockchain Persistence Methods
     # ============================================================================
@@ -11187,15 +11880,15 @@ Your advertisement is now live and ready to earn PYC!"""
         status_group.setLayout(status_layout)
         queue_layout.addWidget(status_group)
         
-        # Pending Transactions Queue
-        pending_group = QGroupBox("📋 Pending Payment Requests")
+        # Pending Ad Click Payments
+        pending_group = QGroupBox("📋 Pending Ad Click Payments")
         pending_layout = QVBoxLayout()
         
-        # Transaction queue table
+        # Ad clicks payment table
         self.transaction_queue_table = QTableWidget()
-        self.transaction_queue_table.setColumnCount(6)
+        self.transaction_queue_table.setColumnCount(7)
         self.transaction_queue_table.setHorizontalHeaderLabels([
-            "Time", "From", "To", "Amount", "Status", "Select"
+            "Click Time", "Developer", "Ad ID", "Zone", "Amount", "Status", "Select"
         ])
         
         queue_header = self.transaction_queue_table.horizontalHeader()
@@ -11324,8 +12017,46 @@ Your advertisement is now live and ready to earn PYC!"""
             
         return False
     
+    def fetch_pending_ad_clicks(self):
+        """Fetch pending ad clicks from database for payment processing"""
+        try:
+            if not hasattr(self, 'central_ledger') or not self.central_ledger:
+                return []
+            
+            # Connect to database if needed
+            if not self.central_ledger.is_connected and not self.central_ledger.connect_to_central_db():
+                return []
+            
+            cursor = self.central_ledger.connection.cursor(dictionary=True)
+            
+            # Fetch all ad clicks with developer info, including processed ones for status display
+            query = """
+                SELECT ac.id, ac.ad_id, ac.click_time, ac.zone, ac.payout_amount, 
+                       ac.processed, d.username, d.pythoncoin_address
+                FROM ad_clicks ac
+                LEFT JOIN developers d ON ac.developer_id = d.id
+                WHERE ac.payout_amount > 0  -- Only clicks with actual payout
+                ORDER BY ac.processed ASC, ac.click_time DESC
+                LIMIT 100
+            """
+            
+            cursor.execute(query)
+            clicks = cursor.fetchall()
+            cursor.close()
+            
+            # Add selection state to clicks
+            for click in clicks:
+                click['selected'] = False
+            
+            self.log_message(f"📋 Fetched {len(clicks)} ad clicks for payment queue")
+            return clicks
+            
+        except Exception as e:
+            self.log_message(f"❌ Error fetching ad clicks: {str(e)}")
+            return []
+    
     def update_transaction_queue_display(self):
-        """Update the transaction queue display table"""
+        """Update the ad clicks payment queue display table"""
         try:
             if not hasattr(self, 'transaction_queue_table'):
                 return
@@ -11333,56 +12064,86 @@ Your advertisement is now live and ready to earn PYC!"""
             # Clear existing rows
             self.transaction_queue_table.setRowCount(0)
             
-            # Add pending transactions
-            pending_transactions = [t for t in self.transaction_queue if t['status'] == 'pending']
-            self.transaction_queue_table.setRowCount(len(pending_transactions))
+            # Fetch pending ad clicks from database
+            pending_clicks = self.fetch_pending_ad_clicks()
+            self.transaction_queue_table.setRowCount(len(pending_clicks))
             
-            for row, transaction in enumerate(pending_transactions):
-                # Time
-                time_str = datetime.fromisoformat(transaction['timestamp']).strftime("%H:%M:%S")
-                time_item = QTableWidgetItem(time_str)
+            for row, click in enumerate(pending_clicks):
+                # Click Time
+                click_time = str(click.get('click_time', ''))[:19]  # YYYY-MM-DD HH:MM:SS
+                time_item = QTableWidgetItem(click_time)
                 self.transaction_queue_table.setItem(row, 0, time_item)
                 
-                # From
-                from_item = QTableWidgetItem(f"{transaction['from_address'][:8]}...")
-                self.transaction_queue_table.setItem(row, 1, from_item)
+                # Developer (name + wallet address)
+                dev_name = click.get('username', 'Unknown')
+                wallet_addr = click.get('pythoncoin_address', '')
+                developer_display = f"{dev_name} ({wallet_addr[:8]}...)" if wallet_addr else dev_name
+                dev_item = QTableWidgetItem(developer_display)
+                self.transaction_queue_table.setItem(row, 1, dev_item)
                 
-                # To
-                to_item = QTableWidgetItem(f"{transaction['to_address'][:8]}...")
-                self.transaction_queue_table.setItem(row, 2, to_item)
+                # Ad ID
+                ad_id = click.get('ad_id', '')
+                ad_display = ad_id[:20] + '...' if len(ad_id) > 20 else ad_id
+                ad_item = QTableWidgetItem(ad_display)
+                self.transaction_queue_table.setItem(row, 2, ad_item)
+                
+                # Zone
+                zone_item = QTableWidgetItem(click.get('zone', 'default'))
+                self.transaction_queue_table.setItem(row, 3, zone_item)
                 
                 # Amount
-                amount_item = QTableWidgetItem(f"{transaction['amount']:.8f} PYC")
-                if transaction['auto_eligible']:
-                    amount_item.setForeground(QColor(40, 167, 69))  # Green for auto-eligible
+                amount = float(click.get('payout_amount', 0))
+                amount_item = QTableWidgetItem(f"{amount:.8f} PYC")
+                if amount > 0:
+                    amount_item.setForeground(QColor(40, 167, 69))  # Green for payable clicks
                 else:
-                    amount_item.setForeground(QColor(220, 53, 69))  # Red for manual approval
-                self.transaction_queue_table.setItem(row, 3, amount_item)
+                    amount_item.setForeground(QColor(108, 117, 125))  # Gray for 0 payout
+                self.transaction_queue_table.setItem(row, 4, amount_item)
                 
                 # Status
-                status_text = "✅ Auto-eligible" if transaction['auto_eligible'] else "⚠️ Manual approval"
+                processed = click.get('processed', 0)
+                status_text = "Paid" if processed else "Pending Payment"
+                status_color = QColor(40, 167, 69) if processed else QColor(255, 193, 7)
                 status_item = QTableWidgetItem(status_text)
-                self.transaction_queue_table.setItem(row, 4, status_item)
+                status_item.setForeground(status_color)
+                self.transaction_queue_table.setItem(row, 5, status_item)
                 
-                # Select checkbox
+                # Select checkbox (only for unpaid clicks with payout > 0)
                 select_checkbox = QCheckBox()
-                select_checkbox.setChecked(transaction['selected'])
-                select_checkbox.stateChanged.connect(
-                    lambda state, t_id=transaction['id']: self.update_transaction_selection(t_id, state == 2)
-                )
-                self.transaction_queue_table.setCellWidget(row, 5, select_checkbox)
+                if not processed and amount > 0:
+                    select_checkbox.setEnabled(True)
+                    # Check if this click is selected
+                    is_selected = getattr(self, 'click_selections', {}).get(click['id'], False)
+                    select_checkbox.setChecked(is_selected)
+                    select_checkbox.stateChanged.connect(
+                        lambda state, click_id=click['id']: self.update_click_selection(click_id, state == 2)
+                    )
+                else:
+                    select_checkbox.setEnabled(False)
+                self.transaction_queue_table.setCellWidget(row, 6, select_checkbox)
             
             # Update status
             if hasattr(self, 'payment_system_status'):
-                pending_count = len(pending_transactions)
-                selected_count = len([t for t in pending_transactions if t['selected']])
-                auto_eligible_count = len([t for t in pending_transactions if t['auto_eligible']])
+                pending_count = len([c for c in pending_clicks if not c.get('processed', 0) and c.get('payout_amount', 0) > 0])
+                paid_count = len([c for c in pending_clicks if c.get('processed', 0)])
+                total_pending_amount = sum(float(c.get('payout_amount', 0)) for c in pending_clicks if not c.get('processed', 0))
                 
-                status_text = f"Status: {pending_count} pending ({selected_count} selected, {auto_eligible_count} auto-eligible)"
+                status_text = f"Status: {pending_count} pending payments ({total_pending_amount:.8f} PYC), {paid_count} completed"
                 self.payment_system_status.setText(status_text)
             
         except Exception as e:
             self.log_message(f"❌ Error updating queue display: {str(e)}")
+    
+    def update_click_selection(self, click_id, selected):
+        """Update selection state for an ad click"""
+        try:
+            # Store selection state (you might want to store this in a class variable)
+            if not hasattr(self, 'click_selections'):
+                self.click_selections = {}
+            self.click_selections[click_id] = selected
+            
+        except Exception as e:
+            self.log_message(f"❌ Error updating click selection: {str(e)}")
     
     def toggle_auto_payments(self):
         """Toggle automatic payments on/off"""
@@ -11430,27 +12191,39 @@ Your advertisement is now live and ready to earn PYC!"""
             self.log_message(f"❌ Error in auto-payment processing: {str(e)}")
     
     def select_all_transactions(self):
-        """Select all pending transactions"""
+        """Select all pending ad click payments"""
         try:
-            for transaction in self.transaction_queue:
-                if transaction['status'] == 'pending':
-                    transaction['selected'] = True
+            if not hasattr(self, 'click_selections'):
+                self.click_selections = {}
+            
+            # Get current pending clicks
+            pending_clicks = self.fetch_pending_ad_clicks()
+            
+            # Select all unpaid clicks with payout > 0
+            for click in pending_clicks:
+                if not click.get('processed', 0) and float(click.get('payout_amount', 0)) > 0:
+                    self.click_selections[click['id']] = True
             
             self.update_transaction_queue_display()
+            self.log_message("✅ Selected all pending ad click payments")
             
         except Exception as e:
-            self.log_message(f"❌ Error selecting all transactions: {str(e)}")
+            self.log_message(f"❌ Error selecting all payments: {str(e)}")
     
     def deselect_all_transactions(self):
-        """Deselect all transactions"""
+        """Deselect all ad click payments"""
         try:
-            for transaction in self.transaction_queue:
-                transaction['selected'] = False
+            if not hasattr(self, 'click_selections'):
+                self.click_selections = {}
+            
+            # Clear all selections
+            self.click_selections.clear()
             
             self.update_transaction_queue_display()
+            self.log_message("✅ Deselected all payments")
             
         except Exception as e:
-            self.log_message(f"❌ Error deselecting transactions: {str(e)}")
+            self.log_message(f"❌ Error deselecting payments: {str(e)}")
     
     def update_transaction_selection(self, transaction_id, selected):
         """Update selection state of a specific transaction"""
@@ -11464,85 +12237,175 @@ Your advertisement is now live and ready to earn PYC!"""
             self.log_message(f"❌ Error updating selection: {str(e)}")
     
     def submit_selected_transactions(self):
-        """Submit all selected transactions for payment"""
+        """Submit all selected ad click payments"""
         try:
-            selected_transactions = [t for t in self.transaction_queue 
-                                   if t['selected'] and t['status'] == 'pending']
+            # Get selected clicks
+            if not hasattr(self, 'click_selections'):
+                self.click_selections = {}
             
-            if not selected_transactions:
-                QMessageBox.warning(self, "No Selection", "Please select transactions to process")
+            selected_click_ids = [click_id for click_id, selected in self.click_selections.items() if selected]
+            
+            if not selected_click_ids:
+                QMessageBox.warning(self, "No Selection", "Please select ad click payments to process")
+                return
+            
+            # Fetch click details
+            pending_clicks = self.fetch_pending_ad_clicks()
+            selected_clicks = [c for c in pending_clicks if c['id'] in selected_click_ids and not c.get('processed', 0)]
+            
+            if not selected_clicks:
+                QMessageBox.warning(self, "No Valid Selections", "No valid unpaid clicks selected")
                 return
             
             # Calculate total amount
-            total_amount = sum(t['amount'] for t in selected_transactions)
+            total_amount = sum(float(c['payout_amount']) for c in selected_clicks)
             
             # Check balance
             current_balance = self.get_current_balance()
             
             if total_amount > current_balance:
                 QMessageBox.warning(self, "Insufficient Funds", 
-                                   f"Total amount: {total_amount:.8f} PYC"
+                                   f"Total amount: {total_amount:.8f} PYC\n"
                                    f"Available balance: {current_balance:.8f} PYC")
                 return
             
             # Confirm submission
-            reply = QMessageBox.question(self, "Confirm Payments", 
-                                       f"Submit {len(selected_transactions)} payments for a total of {total_amount:.8f} PYC?",
+            reply = QMessageBox.question(self, "Confirm Ad Click Payments", 
+                                       f"Process {len(selected_clicks)} ad click payments for a total of {total_amount:.8f} PYC?",
                                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
             
             if reply == QMessageBox.StandardButton.Yes:
-                # Process each selected transaction
+                # Process each selected click payment
                 successful_payments = 0
                 failed_payments = 0
                 
-                for transaction in selected_transactions:
-                    success = self.execute_transaction_payment(transaction)
+                for click in selected_clicks:
+                    success = self.execute_click_payment(click)
                     if success:
-                        transaction['status'] = 'completed_manual'
                         successful_payments += 1
+                        # Remove from selections after successful payment
+                        self.click_selections.pop(click['id'], None)
                     else:
-                        transaction['status'] = 'failed'
                         failed_payments += 1
                 
                 # Show results
                 QMessageBox.information(self, "Payment Results", 
-                                       f"Payment processing complete:"
-                                       f"✅ Successful: {successful_payments}"
-                                       f"❌ Failed: {failed_payments}")
+                                       f"Successful payments: {successful_payments}\n"
+                                       f"Failed payments: {failed_payments}")
                 
-                self.log_message(f"💸 Batch payment complete: {successful_payments} successful, {failed_payments} failed")
+                # Refresh display
                 self.update_transaction_queue_display()
                 
         except Exception as e:
-            self.log_message(f"❌ Error submitting transactions: {str(e)}")
-            QMessageBox.critical(self, "Payment Error", f"Error processing payments: {str(e)}")
+            self.log_message(f"❌ Error processing payments: {str(e)}")
     
-    def execute_transaction_payment(self, transaction):
-        """Execute a single transaction payment"""
+    def execute_click_payment(self, click):
+        """Execute payment for a single ad click with comprehensive debugging"""
         try:
-            if not self.wallet or not self.blockchain:
+            click_id = click['id']
+            wallet_address = click['pythoncoin_address']
+            amount = float(click['payout_amount'])
+            dev_name = click.get('username', 'Unknown')
+            ad_id = click.get('ad_id', 'Unknown')
+            
+            self.log_message(f"🔄 Processing payment for click {click_id}")
+            self.log_message(f"   📋 Details: {dev_name} | {ad_id} | {amount:.8f} PYC | {wallet_address}")
+            
+            # Validation checks with detailed logging
+            if not wallet_address:
+                self.log_message(f"❌ Payment failed: No wallet address for click {click_id}")
+                return False
+                
+            if amount <= 0:
+                self.log_message(f"❌ Payment failed: Invalid amount {amount} for click {click_id}")
                 return False
             
-            # Create and send transaction
-            tx = self.wallet.send(transaction['to_address'], transaction['amount'])
+            # Wallet availability check
+            if not self.wallet:
+                self.log_message(f"❌ Payment failed: Wallet not initialized for click {click_id}")
+                return False
+                
+            # Check wallet balance before attempting payment
+            try:
+                current_balance = self.wallet.get_balance()
+                self.log_message(f"💳 Current wallet balance: {current_balance:.8f} PYC")
+                
+                if current_balance < amount:
+                    self.log_message(f"❌ Payment failed: Insufficient balance ({current_balance:.8f} < {amount:.8f}) for click {click_id}")
+                    return False
+                    
+            except Exception as balance_error:
+                self.log_message(f"⚠️ Could not check balance: {str(balance_error)} - Attempting payment anyway")
             
-            if tx:
-                self.log_message(f"💰 Payment sent: {transaction['amount']:.6f} PYC to {transaction['to_address'][:8]}...")
+            # Attempt payment with detailed logging
+            self.log_message(f"💸 Sending payment: {amount:.8f} PYC to {wallet_address}")
+            
+            try:
+                tx = self.wallet.send(wallet_address, amount)
                 
-                # Update stats
-                self.stats['payments_sent'] = self.stats.get('payments_sent', 0) + 1
-                
-                # Save blockchain state
-                if hasattr(self, 'save_blockchain'):
-                    self.save_blockchain()
-                
-                return True
-            else:
-                self.log_message(f"❌ Payment failed: {transaction['amount']:.6f} PYC to {transaction['to_address'][:8]}...")
+                if tx and hasattr(tx, 'tx_id'):
+                    # Mark click as processed in database
+                    mark_success = self.mark_click_as_paid(click_id, tx.tx_id)
+                    
+                    if mark_success:
+                        self.log_message(f"✅ Payment successful: {amount:.8f} PYC to {dev_name}")
+                        self.log_message(f"   🔗 Transaction ID: {tx.tx_id}")
+                        self.log_message(f"   ✓ Database updated for click {click_id}")
+                        
+                        # Update stats
+                        self.stats['payments_sent'] = self.stats.get('payments_sent', 0) + 1
+                        return True
+                    else:
+                        self.log_message(f"⚠️ Payment sent but database update failed for click {click_id}")
+                        self.log_message(f"   🔗 Transaction ID: {tx.tx_id} (manual verification needed)")
+                        return False
+                        
+                elif tx:
+                    self.log_message(f"⚠️ Payment sent but no transaction ID returned for click {click_id}")
+                    return False
+                else:
+                    self.log_message(f"❌ Payment transaction failed for click {click_id}")
+                    self.log_message(f"   💡 Check wallet connectivity and balance")
+                    return False
+                    
+            except Exception as tx_error:
+                self.log_message(f"❌ Transaction error for click {click_id}: {str(tx_error)}")
+                import traceback
+                self.log_message(f"   📝 Full error: {traceback.format_exc()}")
                 return False
                 
         except Exception as e:
-            self.log_message(f"❌ Transaction execution error: {str(e)}")
+            self.log_message(f"❌ Critical error executing payment for click {click_id}: {str(e)}")
+            import traceback
+            self.log_message(f"   📝 Full traceback: {traceback.format_exc()}")
+            return False
+    
+    def mark_click_as_paid(self, click_id, transaction_id):
+        """Mark an ad click as paid in the database"""
+        try:
+            if not hasattr(self, 'central_ledger') or not self.central_ledger:
+                return False
+            
+            if not self.central_ledger.is_connected and not self.central_ledger.connect_to_central_db():
+                return False
+            
+            cursor = self.central_ledger.connection.cursor()
+            
+            # Update the click as processed
+            query = """
+                UPDATE ad_clicks 
+                SET processed = 1, transaction_id = %s 
+                WHERE id = %s
+            """
+            
+            cursor.execute(query, (transaction_id, click_id))
+            cursor.close()
+            
+            self.log_message(f"✅ Marked click {click_id} as paid (TX: {transaction_id})")
+            return True
+            
+        except Exception as e:
+            self.log_message(f"❌ Error marking click as paid: {str(e)}")
             return False
     
     def clear_transaction_queue(self):
@@ -12120,8 +12983,8 @@ Your advertisement is now live and ready to earn PYC!"""
             
             # Get image URL
             image_url = ""
-            if hasattr(self, 'current_ad_image'):
-                image_url = f"file://{self.current_ad_image}"
+            if hasattr(self, 'current_ad_media'):
+                image_url = f"file://{self.current_ad_media}"
             
             # Get targeting options
             interests = [i.strip() for i in self.target_interests.text().split(',') if i.strip()]
@@ -12428,8 +13291,8 @@ Your advertisement is now live and ready to earn PYC!"""
                 
                 # Get image URL
                 image_url = ""
-                if hasattr(self, 'current_ad_image'):
-                    image_url = f"file://{self.current_ad_image}"
+                if hasattr(self, 'current_ad_media'):
+                    image_url = f"file://{self.current_ad_media}"
                 
                 # Get targeting options
                 interests = [i.strip() for i in self.target_interests.text().split(',') if i.strip()]

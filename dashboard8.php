@@ -58,13 +58,13 @@ function scanActiveAdsStorage() {
         return [];
     }
     
-    // Group files by ad ID
+    // Group files by ad ID - Enhanced to support multiple ad types
     $adGroups = [];
     foreach ($files as $file) {
         if ($file === '.' || $file === '..') continue;
         
-        // Extract ad ID from filename (everything before the last underscore and extension)
-        if (preg_match('/^(.+)_(svg|html|meta)\.(svg|html|json)$/', $file, $matches)) {
+        // Extract ad ID from filename - support for different ad types
+        if (preg_match('/^(.+)_(svg|html|meta|video|image|text)\.(svg|html|json|mp4|jpg|jpeg|png|gif|txt)$/', $file, $matches)) {
             $adId = $matches[1];
             $fileType = $matches[2];
             
@@ -76,9 +76,36 @@ function scanActiveAdsStorage() {
         }
     }
     
-    // Process complete ad trios
+    // Process ads based on available files - Enhanced for multiple ad types
     foreach ($adGroups as $adId => $files) {
-        if (isset($files['svg']) && isset($files['html']) && isset($files['meta'])) {
+        // Determine ad type and required files
+        $adType = 'unknown';
+        $hasRequiredFiles = false;
+        
+        if (isset($files['meta'])) {
+            // Video ads: require meta + video file
+            if (isset($files['video'])) {
+                $adType = 'video';
+                $hasRequiredFiles = true;
+            }
+            // Picture ads: require meta + image file (+ optional html for overlay)
+            elseif (isset($files['image'])) {
+                $adType = 'picture';
+                $hasRequiredFiles = true;
+            }
+            // Text ads: require meta + text file (+ optional html for styling)
+            elseif (isset($files['text'])) {
+                $adType = 'text';
+                $hasRequiredFiles = true;
+            }
+            // Legacy SVG ads: require meta + svg + html
+            elseif (isset($files['svg']) && isset($files['html'])) {
+                $adType = 'svg';
+                $hasRequiredFiles = true;
+            }
+        }
+        
+        if ($hasRequiredFiles) {
             $metaFile = $adsPath . '/' . $files['meta'];
             
             if (file_exists($metaFile)) {
@@ -91,9 +118,51 @@ function scanActiveAdsStorage() {
                     $status = $metadata['status'] ?? 'active';
                     
                     if ($status === 'active' && (!$expiresAt || strtotime($expiresAt) > time())) {
+                        // Build files array based on ad type
+                        $adFiles = ['meta' => $files['meta']];
+                        $adUrls = [];
+                        
+                        switch ($adType) {
+                            case 'video':
+                                $adFiles['video'] = $files['video'];
+                                $adUrls['video_url'] = "?ajax=serve_ad_video&ad_id=" . urlencode($adId);
+                                if (isset($files['html'])) {
+                                    $adFiles['html'] = $files['html'];
+                                    $adUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+                                }
+                                break;
+                                
+                            case 'picture':
+                                $adFiles['image'] = $files['image'];
+                                $adUrls['image_url'] = "?ajax=serve_ad_image&ad_id=" . urlencode($adId);
+                                if (isset($files['html'])) {
+                                    $adFiles['html'] = $files['html'];
+                                    $adUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+                                }
+                                break;
+                                
+                            case 'text':
+                                $adFiles['text'] = $files['text'];
+                                $adUrls['text_url'] = "?ajax=serve_ad_text&ad_id=" . urlencode($adId);
+                                if (isset($files['html'])) {
+                                    $adFiles['html'] = $files['html'];
+                                    $adUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+                                }
+                                break;
+                                
+                            case 'svg':
+                            default:
+                                $adFiles['svg'] = $files['svg'] ?? null;
+                                $adFiles['html'] = $files['html'] ?? null;
+                                $adUrls['svg_url'] = "?ajax=serve_ad_svg&ad_id=" . urlencode($adId);
+                                $adUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+                                break;
+                        }
+                        
                         $ads[] = [
                             'id' => $adId,
                             'ad_id' => $adId,
+                            'ad_type' => $adType,
                             'title' => $metadata['title'] ?? 'Untitled Ad',
                             'description' => $metadata['description'] ?? '',
                             'category' => $metadata['category'] ?? 'general',
@@ -107,19 +176,13 @@ function scanActiveAdsStorage() {
                             'expires_at' => $metadata['expires_at'] ?? null,
                             'click_count' => $metadata['click_count'] ?? 0,
                             'impression_count' => $metadata['impression_count'] ?? 0,
-                            'files' => [
-                                'svg' => $files['svg'],
-                                'html' => $files['html'],
-                                'meta' => $files['meta']
-                            ],
+                            'files' => $adFiles,
                             'file_path' => $adsPath,
-                            'svg_url' => "?ajax=serve_ad_svg&ad_id=" . urlencode($adId),
-                            'html_url' => "?ajax=serve_ad_html&ad_id=" . urlencode($adId),
                             'client_id' => 'local_storage',
                             'client_host' => '127.0.0.1',
                             'client_port' => '8082',
                             'source' => 'ads_storage'
-                        ];
+                        ] + $adUrls;
                     }
                 }
             }
@@ -157,16 +220,269 @@ function serveAdContent($adId, $contentType = 'svg') {
         return null;
     }
     
-    $extension = $contentType === 'html' ? 'html' : 'svg';
-    $fileName = $adId . '_' . $contentType . '.' . $extension;
-    $filePath = $adsPath . '/' . $fileName;
+    // Handle different ad content types with proper file naming
+    $filePath = null;
+    
+    switch ($contentType) {
+        case 'html':
+            $filePath = $adsPath . '/' . $adId . '_html.html';
+            break;
+        case 'video':
+            // Check for video files with different extensions
+            $videoExtensions = ['mp4', 'webm', 'mov'];
+            foreach ($videoExtensions as $ext) {
+                $testPath = $adsPath . '/' . $adId . '_video.' . $ext;
+                if (file_exists($testPath)) {
+                    return $testPath; // Return file path for videos
+                }
+                // Also check assets directory
+                $assetsPath = dirname($adsPath) . '/assets/videos/' . $adId . '.' . $ext;
+                if (file_exists($assetsPath)) {
+                    return $assetsPath;
+                }
+            }
+            return null;
+        case 'image':
+            // Check for multiple image formats in multiple locations
+            $imageExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp'];
+            foreach ($imageExtensions as $ext) {
+                // Check main active directory
+                $testPath = $adsPath . '/' . $adId . '_image.' . $ext;
+                if (file_exists($testPath)) {
+                    return $testPath; // Return file path for images
+                }
+                // Check assets directory
+                $assetsPath = dirname($adsPath) . '/assets/images/' . $adId . '.' . $ext;
+                if (file_exists($assetsPath)) {
+                    return $assetsPath;
+                }
+            }
+            return null;
+        case 'text':
+            $filePath = $adsPath . '/' . $adId . '_text.txt';
+            // Also check for plain text content in assets
+            if (!file_exists($filePath)) {
+                $assetsPath = dirname($adsPath) . '/assets/documents/' . $adId . '.txt';
+                if (file_exists($assetsPath)) {
+                    $filePath = $assetsPath;
+                }
+            }
+            break;
+        case 'svg':
+        default:
+            $filePath = $adsPath . '/' . $adId . '_svg.svg';
+            break;
+    }
     
     if (file_exists($filePath)) {
+        // For video and image files, return the file path instead of content
+        if ($contentType === 'video' || $contentType === 'image') {
+            return $filePath;
+        }
+        // For text-based content, return the file content
         return file_get_contents($filePath);
     }
     
     error_log("Ad file not found: $filePath");
     return null;
+}
+
+function createAdFiles($adType, $metadata, $postData, $files) {
+    global $adsStoragePath;
+    
+    if (!$adsStoragePath || !is_dir($adsStoragePath)) {
+        return ['success' => false, 'error' => 'Ads storage directory not found'];
+    }
+    
+    // Generate unique ad ID
+    $adId = 'ad_' . uniqid() . '_' . time();
+    
+    // Create metadata file
+    $metaData = [
+        'title' => $metadata['title'],
+        'description' => $metadata['description'],
+        'category' => $metadata['category'],
+        'payout_rate' => $metadata['payout_rate'],
+        'click_url' => $metadata['target_url'],
+        'advertiser_address' => $metadata['advertiser_address'],
+        'created_at' => date('Y-m-d H:i:s'),
+        'expires_at' => date('Y-m-d H:i:s', strtotime('+30 days')),
+        'status' => 'active',
+        'ad_type' => $adType,
+        'click_count' => 0,
+        'impression_count' => 0
+    ];
+    
+    $metaFilePath = $adsStoragePath . '/' . $adId . '_meta.json';
+    if (!file_put_contents($metaFilePath, json_encode($metaData, JSON_PRETTY_PRINT))) {
+        return ['success' => false, 'error' => 'Failed to create metadata file'];
+    }
+    
+    $previewUrls = [];
+    
+    try {
+        switch ($adType) {
+            case 'video':
+                $result = createVideoAdFiles($adId, $postData, $files, $adsStoragePath);
+                if (!$result['success']) return $result;
+                $previewUrls = $result['preview_urls'];
+                break;
+                
+            case 'picture':
+                $result = createPictureAdFiles($adId, $postData, $files, $adsStoragePath);
+                if (!$result['success']) return $result;
+                $previewUrls = $result['preview_urls'];
+                break;
+                
+            case 'text':
+                $result = createTextAdFiles($adId, $postData, $adsStoragePath);
+                if (!$result['success']) return $result;
+                $previewUrls = $result['preview_urls'];
+                break;
+                
+            case 'svg':
+                $result = createSvgAdFiles($adId, $postData, $adsStoragePath);
+                if (!$result['success']) return $result;
+                $previewUrls = $result['preview_urls'];
+                break;
+                
+            default:
+                return ['success' => false, 'error' => 'Unsupported ad type'];
+        }
+        
+        return [
+            'success' => true,
+            'ad_id' => $adId,
+            'preview_urls' => $previewUrls
+        ];
+        
+    } catch (Exception $e) {
+        // Clean up metadata file if ad creation fails
+        if (file_exists($metaFilePath)) {
+            unlink($metaFilePath);
+        }
+        return ['success' => false, 'error' => 'Ad creation failed: ' . $e->getMessage()];
+    }
+}
+
+function createVideoAdFiles($adId, $postData, $files, $adsStoragePath) {
+    if (!isset($files['video_file']) || $files['video_file']['error'] !== UPLOAD_ERR_OK) {
+        return ['success' => false, 'error' => 'Video file upload failed'];
+    }
+    
+    $videoFile = $files['video_file'];
+    $videoExt = pathinfo($videoFile['name'], PATHINFO_EXTENSION);
+    
+    if (strtolower($videoExt) !== 'mp4') {
+        return ['success' => false, 'error' => 'Only MP4 video files are supported'];
+    }
+    
+    $videoPath = $adsStoragePath . '/' . $adId . '_video.mp4';
+    if (!move_uploaded_file($videoFile['tmp_name'], $videoPath)) {
+        return ['success' => false, 'error' => 'Failed to save video file'];
+    }
+    
+    $previewUrls = ['video_url' => "?ajax=serve_ad_video&ad_id=" . urlencode($adId)];
+    
+    // Handle overlay if provided
+    $hasOverlay = isset($postData['has_overlay']) && $postData['has_overlay'] === 'true';
+    if ($hasOverlay && !empty($postData['overlay_html'])) {
+        $htmlPath = $adsStoragePath . '/' . $adId . '_html.html';
+        if (!file_put_contents($htmlPath, $postData['overlay_html'])) {
+            return ['success' => false, 'error' => 'Failed to save overlay HTML'];
+        }
+        $previewUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+    }
+    
+    return ['success' => true, 'preview_urls' => $previewUrls];
+}
+
+function createPictureAdFiles($adId, $postData, $files, $adsStoragePath) {
+    if (!isset($files['image_file']) || $files['image_file']['error'] !== UPLOAD_ERR_OK) {
+        return ['success' => false, 'error' => 'Image file upload failed'];
+    }
+    
+    $imageFile = $files['image_file'];
+    $imageExt = strtolower(pathinfo($imageFile['name'], PATHINFO_EXTENSION));
+    
+    if (!in_array($imageExt, ['jpg', 'jpeg', 'png', 'gif'])) {
+        return ['success' => false, 'error' => 'Only JPG, PNG, and GIF image files are supported'];
+    }
+    
+    $imagePath = $adsStoragePath . '/' . $adId . '_image.' . $imageExt;
+    if (!move_uploaded_file($imageFile['tmp_name'], $imagePath)) {
+        return ['success' => false, 'error' => 'Failed to save image file'];
+    }
+    
+    $previewUrls = ['image_url' => "?ajax=serve_ad_image&ad_id=" . urlencode($adId)];
+    
+    // Handle overlay if provided
+    $hasOverlay = isset($postData['has_overlay']) && $postData['has_overlay'] === 'true';
+    if ($hasOverlay && !empty($postData['overlay_html'])) {
+        $htmlPath = $adsStoragePath . '/' . $adId . '_html.html';
+        if (!file_put_contents($htmlPath, $postData['overlay_html'])) {
+            return ['success' => false, 'error' => 'Failed to save overlay HTML'];
+        }
+        $previewUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+    }
+    
+    return ['success' => true, 'preview_urls' => $previewUrls];
+}
+
+function createTextAdFiles($adId, $postData, $adsStoragePath) {
+    if (empty($postData['text_content'])) {
+        return ['success' => false, 'error' => 'Text content is required'];
+    }
+    
+    $textPath = $adsStoragePath . '/' . $adId . '_text.txt';
+    if (!file_put_contents($textPath, $postData['text_content'])) {
+        return ['success' => false, 'error' => 'Failed to save text content'];
+    }
+    
+    $previewUrls = ['text_url' => "?ajax=serve_ad_text&ad_id=" . urlencode($adId)];
+    
+    // Handle styling if provided
+    $hasStyling = isset($postData['has_styling']) && $postData['has_styling'] === 'true';
+    if ($hasStyling && !empty($postData['styling_html'])) {
+        $htmlPath = $adsStoragePath . '/' . $adId . '_html.html';
+        if (!file_put_contents($htmlPath, $postData['styling_html'])) {
+            return ['success' => false, 'error' => 'Failed to save styling HTML'];
+        }
+        $previewUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+    }
+    
+    return ['success' => true, 'preview_urls' => $previewUrls];
+}
+
+function createSvgAdFiles($adId, $postData, $adsStoragePath) {
+    if (empty($postData['svg_content'])) {
+        return ['success' => false, 'error' => 'SVG content is required'];
+    }
+    
+    // Validate SVG content
+    $svgContent = $postData['svg_content'];
+    if (strpos($svgContent, '<svg') === false) {
+        return ['success' => false, 'error' => 'Invalid SVG content - must contain <svg> tag'];
+    }
+    
+    $svgPath = $adsStoragePath . '/' . $adId . '_svg.svg';
+    if (!file_put_contents($svgPath, $svgContent)) {
+        return ['success' => false, 'error' => 'Failed to save SVG content'];
+    }
+    
+    $previewUrls = ['svg_url' => "?ajax=serve_ad_svg&ad_id=" . urlencode($adId)];
+    
+    // Handle HTML component if provided
+    $hasHtml = isset($postData['has_html']) && $postData['has_html'] === 'true';
+    if ($hasHtml && !empty($postData['html_content'])) {
+        $htmlPath = $adsStoragePath . '/' . $adId . '_html.html';
+        if (!file_put_contents($htmlPath, $postData['html_content'])) {
+            return ['success' => false, 'error' => 'Failed to save HTML component'];
+        }
+        $previewUrls['html_url'] = "?ajax=serve_ad_html&ad_id=" . urlencode($adId);
+    }
+    
+    return ['success' => true, 'preview_urls' => $previewUrls];
 }
 
 // Database connection
@@ -380,6 +696,72 @@ class PythonCoinAPI {
             'developer_address' => $developerAddress,
             'zone' => $zone
         ], 'POST');
+    }
+}
+
+// Client detection and ad fetching functions
+function checkOnlineClients() {
+    $pdo = getDatabase();
+    if (!$pdo) return [];
+    
+    try {
+        // Get clients that have been active in the last 5 minutes
+        $stmt = $pdo->prepare("
+            SELECT client_id, name, host, port, wallet_address, version 
+            FROM p2p_clients 
+            WHERE status = 'online' 
+            AND last_seen > DATE_SUB(NOW(), INTERVAL 5 MINUTE)
+            ORDER BY last_seen DESC
+        ");
+        $stmt->execute();
+        return $stmt->fetchAll();
+    } catch (Exception $e) {
+        error_log("Error checking online clients: " . $e->getMessage());
+        return [];
+    }
+}
+
+function getAdsFromClient($client) {
+    try {
+        $url = "http://{$client['host']}:{$client['port']}/get_ads";
+        
+        // Set a short timeout for client responsiveness
+        $context = stream_context_create([
+            'http' => [
+                'timeout' => 3,
+                'method' => 'GET',
+                'header' => "User-Agent: PythonCoin-Dashboard/2.2.0\r\n"
+            ]
+        ]);
+        
+        $response = @file_get_contents($url, false, $context);
+        if ($response === false) {
+            return [];
+        }
+        
+        $data = json_decode($response, true);
+        if ($data && isset($data['ads'])) {
+            // Add client info to each ad
+            foreach ($data['ads'] as &$ad) {
+                $ad['client_host'] = $client['host'];
+                $ad['client_port'] = $client['port'];
+                $ad['client_name'] = $client['name'];
+                $ad['is_live'] = true;
+                
+                // Ensure payout rate is set from the client's ad data
+                if (!isset($ad['payout_rate']) && !isset($ad['payout_amount'])) {
+                    $ad['payout_rate'] = 0.000005; // Default live rate
+                }
+            }
+            unset($ad);
+            
+            return $data['ads'];
+        }
+        
+        return [];
+    } catch (Exception $e) {
+        error_log("Error getting ads from client {$client['client_id']}: " . $e->getMessage());
+        return [];
     }
 }
 
@@ -733,6 +1115,53 @@ if (isset($_GET['ajax'])) {
                 }
                 exit;
                 
+            case 'serve_ad_video':
+                $adId = $_GET['ad_id'] ?? '';
+                $videoContent = serveAdContent($adId, 'video');
+                
+                if ($videoContent && file_exists($videoContent)) {
+                    // Set appropriate headers for video content
+                    $finfo = new finfo(FILEINFO_MIME_TYPE);
+                    $mimeType = $finfo->file($videoContent);
+                    header('Content-Type: ' . $mimeType);
+                    header('Content-Length: ' . filesize($videoContent));
+                    header('Accept-Ranges: bytes');
+                    readfile($videoContent);
+                } else {
+                    header('HTTP/1.0 404 Not Found');
+                    echo 'Video not found for ID: ' . htmlspecialchars($adId);
+                }
+                exit;
+                
+            case 'serve_ad_image':
+                $adId = $_GET['ad_id'] ?? '';
+                $imageContent = serveAdContent($adId, 'image');
+                
+                if ($imageContent && file_exists($imageContent)) {
+                    // Set appropriate headers for image content
+                    $finfo = new finfo(FILEINFO_MIME_TYPE);
+                    $mimeType = $finfo->file($imageContent);
+                    header('Content-Type: ' . $mimeType);
+                    header('Content-Length: ' . filesize($imageContent));
+                    readfile($imageContent);
+                } else {
+                    header('HTTP/1.0 404 Not Found');
+                    echo 'Image not found for ID: ' . htmlspecialchars($adId);
+                }
+                exit;
+                
+            case 'serve_ad_text':
+                header('Content-Type: text/plain; charset=utf-8');
+                $adId = $_GET['ad_id'] ?? '';
+                $textContent = serveAdContent($adId, 'text');
+                
+                if ($textContent) {
+                    echo $textContent;
+                } else {
+                    echo 'Text content not found for ID: ' . htmlspecialchars($adId);
+                }
+                exit;
+                
             case 'scan_storage_ads':
                 $storageAds = scanActiveAdsStorage();
                 echo json_encode([
@@ -817,20 +1246,59 @@ if (isset($_GET['ajax'])) {
                 break;
                 
             case 'get_ads':
-                // Enhanced ads loading with storage integration
+                // Enhanced ads loading with P2P client detection and proper payout rates
                 $result = ['success' => false, 'ads' => []];
                 
                 if (isset($_SESSION['developer'])) {
                     $developer = getDeveloperByUsername($_SESSION['developer']['username']);
                     if ($developer) {
-                        // Get ads from storage first
-                        $storageAds = scanActiveAdsStorage();
+                        $allAds = [];
+                        $sources = [];
                         
-                        // Try to get ads from PyQt client
+                        // PRIORITY 1: Get ads directly from online P2P clients (live ads with negotiated rates)
+                        $onlineClients = checkOnlineClients();
+                        $liveAds = [];
+                        
+                        foreach ($onlineClients as $client) {
+                            $clientAds = getAdsFromClient($client);
+                            if ($clientAds) {
+                                foreach ($clientAds as $ad) {
+                                    $ad['source'] = 'p2p_client';
+                                    $ad['client_id'] = $client['client_id'];
+                                    $ad['payout_amount'] = $ad['payout_rate'] ?? 0.000005; // Live negotiated rate
+                                    $ad['is_verified'] = true; // Direct from client
+                                    $liveAds[] = $ad;
+                                }
+                                $sources[] = "P2P Client: {$client['name']} ({$client['client_id']})";
+                            }
+                        }
+                        
+                        // PRIORITY 2: Get ads from storage (fixed lower rate)
+                        $storageAds = scanActiveAdsStorage();
+                        foreach ($storageAds as &$ad) {
+                            $ad['source'] = 'ads_storage';
+                            $ad['payout_amount'] = 0.0000009; // Fixed storage rate
+                            $ad['is_verified'] = true;
+                        }
+                        unset($ad);
+                        
+                        if (count($storageAds) > 0) {
+                            $sources[] = "Storage: " . count($storageAds) . " ads";
+                        }
+                        
+                        // PRIORITY 3: Legacy PyQt client API (fallback)
+                        $legacyAds = [];
                         $apiResult = $api->getAdsForDeveloper($developer['pythoncoin_address']);
                         
                         if ($apiResult && isset($apiResult['success']) && $apiResult['success'] && isset($apiResult['ads'])) {
-                            $allAds = array_merge($storageAds, $apiResult['ads']);
+                            foreach ($apiResult['ads'] as $ad) {
+                                $ad['source'] = 'legacy_api';
+                                $ad['payout_amount'] = $ad['payout_rate'] ?? 0.000005; // Legacy rate
+                                $ad['is_verified'] = false; // Requires verification
+                                $legacyAds[] = $ad;
+                            }
+                            $sources[] = "Legacy API: " . count($legacyAds) . " ads";
+                            
                             // Cache the network ads
                             if (!empty($apiResult['ads'])) {
                                 foreach($apiResult['ads'] as &$ad_item) {
@@ -843,20 +1311,31 @@ if (isset($_GET['ajax'])) {
                             // Fallback to cached ads
                             $cachedAds = getCachedAds();
                             if (!empty($cachedAds)) {
-                                $allAds = array_merge($storageAds, $cachedAds);
+                                $legacyAds = array_merge($legacyAds, $cachedAds);
                             } else {
                                 // Use enhanced network sample ads as fallback
                                 $sampleAds = getEnhancedNetworkSampleAds(); 
-                                $allAds = array_merge($storageAds, $sampleAds);
+                                foreach ($sampleAds as $ad) {
+                                    $ad['source'] = 'sample';
+                                    $ad['payout_amount'] = 0.000005;
+                                    $ad['is_verified'] = false;
+                                    $legacyAds[] = $ad;
+                                }
                             }
                         }
+                        
+                        // Combine all ads: Live ads first (highest priority), then storage, then legacy
+                        $allAds = array_merge($liveAds, $storageAds, $legacyAds);
                         
                         $result = [
                             'success' => true, 
                             'ads' => $allAds, 
+                            'live_count' => count($liveAds),
                             'storage_count' => count($storageAds),
+                            'legacy_count' => count($legacyAds),
                             'total_count' => count($allAds),
-                            'source' => 'combined'
+                            'sources' => $sources,
+                            'source' => 'multi_source'
                         ];
                     } else {
                         $result = ['success' => false, 'error' => 'Developer not found'];
@@ -1278,6 +1757,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         case 'logout':
             session_destroy();
             header('Location: ' . $_SERVER['PHP_SELF']);
+            exit;
+            
+        case 'create_ad':
+            if (!$isLoggedIn) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Not authenticated']);
+                exit;
+            }
+            
+            $adType = $_POST['ad_type'] ?? '';
+            $title = trim($_POST['title'] ?? '');
+            $category = $_POST['category'] ?? 'general';
+            $description = trim($_POST['description'] ?? '');
+            $payoutRate = floatval($_POST['payout_rate'] ?? 0.000005);
+            $targetUrl = trim($_POST['target_url'] ?? '');
+            $advertiserAddress = trim($_POST['advertiser_address'] ?? '');
+            
+            if (!$title || !$targetUrl || !$advertiserAddress || !in_array($adType, ['video', 'picture', 'text', 'svg'])) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Missing required fields or invalid ad type']);
+                exit;
+            }
+            
+            try {
+                $result = createAdFiles($adType, [
+                    'title' => $title,
+                    'category' => $category,
+                    'description' => $description,
+                    'payout_rate' => $payoutRate,
+                    'target_url' => $targetUrl,
+                    'advertiser_address' => $advertiserAddress
+                ], $_POST, $_FILES);
+                
+                if ($result['success']) {
+                    header('Content-Type: application/json');
+                    echo json_encode([
+                        'success' => true,
+                        'ad_id' => $result['ad_id'],
+                        'preview_urls' => $result['preview_urls']
+                    ]);
+                } else {
+                    header('Content-Type: application/json');
+                    echo json_encode(['success' => false, 'error' => $result['error']]);
+                }
+            } catch (Exception $e) {
+                header('Content-Type: application/json');
+                echo json_encode(['success' => false, 'error' => 'Server error: ' . $e->getMessage()]);
+            }
             exit;
     }
 }
@@ -2280,16 +2807,58 @@ if ($isLoggedIn) {
                 
                 <div id="adStatusInfo"></div>
                 
+                <!-- Ad Sources Summary -->
+                <div class="ad-sources-summary" id="adSourcesSummary" style="margin: 20px 0; display: none;">
+                    <h3 style="margin-bottom: 15px; color: #333;">📊 Ad Sources Overview</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div class="source-card" id="liveSourceCard" style="background: linear-gradient(135deg, #28a745, #20c997); color: white; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold;" id="liveCount">0</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Live P2P Ads</div>
+                            <div style="font-size: 12px; margin-top: 5px;">0.000005 PYC/click</div>
+                        </div>
+                        <div class="source-card" id="storageSourceCard" style="background: linear-gradient(135deg, #6c757d, #495057); color: white; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold;" id="storageCount">0</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Storage Ads</div>
+                            <div style="font-size: 12px; margin-top: 5px;">0.0000009 PYC/click</div>
+                        </div>
+                        <div class="source-card" id="legacySourceCard" style="background: linear-gradient(135deg, #ffc107, #e0a800); color: white; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold;" id="legacyCount">0</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Legacy Ads</div>
+                            <div style="font-size: 12px; margin-top: 5px;">0.000005 PYC/click</div>
+                        </div>
+                        <div class="source-card" id="totalSourceCard" style="background: linear-gradient(135deg, #007bff, #0056b3); color: white; padding: 15px; border-radius: 8px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: bold;" id="totalCount">0</div>
+                            <div style="font-size: 14px; opacity: 0.9;">Total Ads</div>
+                            <div style="font-size: 12px; margin-top: 5px;" id="avgPayout">Avg: 0 PYC/click</div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; padding: 10px; background: #f8f9fa; border-radius: 5px; font-size: 13px; color: #6c757d;">
+                        <strong>Priority:</strong> Live P2P ads (highest payout) → Storage ads (reliable) → Legacy ads (fallback)
+                    </div>
+                </div>
+                
                 <div class="ad-preview" id="adsList">
                     <?php if ($ads && isset($ads['ads']) && is_array($ads['ads'])): ?>
                         <?php foreach ($ads['ads'] as $ad): ?>
                         <div class="ad-item">
                             <div class="ad-image">
-                                <?php if (isset($ad['source']) && $ad['source'] === 'ads_storage'): ?>
-                                📂
-                                <?php else: ?>
-                                📺
-                                <?php endif; ?>
+                                <?php 
+                                $adType = $ad['ad_type'] ?? 'svg';
+                                $source = $ad['source'] ?? 'network';
+                                
+                                // Display icon based on ad type
+                                if ($adType === 'video') {
+                                    echo '🎬';
+                                } elseif ($adType === 'picture') {
+                                    echo '🖼️';
+                                } elseif ($adType === 'text') {
+                                    echo '📝';
+                                } elseif ($source === 'ads_storage') {
+                                    echo '📂';
+                                } else {
+                                    echo '📺';
+                                }
+                                ?>
                             </div>
                             <div class="ad-content">
                                 <div class="ad-title">
@@ -2303,20 +2872,66 @@ if ($isLoggedIn) {
                                 <div class="ad-description"><?php echo htmlspecialchars($ad['description'] ?? 'No description'); ?></div>
                                 <div class="ad-meta">
                                     <strong>Category:</strong> <?php echo htmlspecialchars($ad['category'] ?? 'general'); ?> | 
-                                    <strong>Payout:</strong> <?php echo number_format($ad['payout_amount'] ?? $ad['payout'] ?? 0.001, 8); ?> PYC
+                                    <strong>Payout:</strong> <?php 
+                                        // Display correct payout based on source with verification
+                                        $source = $ad['source'] ?? 'network';
+                                        $isVerified = $ad['is_verified'] ?? false;
+                                        $verificationIcon = $isVerified ? '✅' : '⚠️';
+                                        
+                                        if ($source === 'ads_storage') {
+                                            echo number_format(0.0000009, 10) . ' PYC ';
+                                            echo '<span style="color: #6c757d;">(Storage) ' . $verificationIcon . '</span>';
+                                        } elseif ($source === 'p2p_client') {
+                                            $payout = $ad['payout_amount'] ?? $ad['payout'] ?? 0.000005;
+                                            echo number_format($payout, 10) . ' PYC ';
+                                            echo '<span style="color: #28a745;">(Live P2P) ' . $verificationIcon . '</span>';
+                                        } else {
+                                            $payout = $ad['payout_amount'] ?? $ad['payout'] ?? 0.000005;
+                                            echo number_format($payout, 10) . ' PYC ';
+                                            echo '<span style="color: #ffc107;">(Legacy) ' . $verificationIcon . '</span>';
+                                        }
+                                    ?>
                                     <?php if (isset($ad['client_id'])): ?>
                                      | <strong>Client:</strong> <?php echo htmlspecialchars($ad['client_id']); ?>
                                     <?php endif; ?>
-                                    <?php if (isset($ad['html_url'])): ?>
-                                     | <strong>Format:</strong> HTML + SVG
-                                    <?php else: ?>
-                                     | <strong>Format:</strong> SVG Only
-                                    <?php endif; ?>
+                                     | <strong>Type:</strong> <?php 
+                                        $adType = $ad['ad_type'] ?? 'svg';
+                                        switch ($adType) {
+                                            case 'video':
+                                                echo 'Video Ad 🎬';
+                                                if (isset($ad['html_url'])) echo ' + HTML Overlay';
+                                                break;
+                                            case 'picture':
+                                                echo 'Picture Ad 🖼️';
+                                                if (isset($ad['html_url'])) echo ' + Text Overlay';
+                                                break;
+                                            case 'text':
+                                                echo 'Text Ad 📝';
+                                                if (isset($ad['html_url'])) echo ' + HTML Styling';
+                                                break;
+                                            case 'svg':
+                                            default:
+                                                if (isset($ad['html_url'])) {
+                                                    echo 'SVG + HTML';
+                                                } else {
+                                                    echo 'SVG Only';
+                                                }
+                                                break;
+                                        }
+                                    ?>
                                 </div>
                             </div>
                             <div style="display: flex; flex-direction: column; gap: 5px;">
                                 <button class="btn btn-info" onclick="previewSingleAd('<?php echo htmlspecialchars($ad['id'] ?? $ad['ad_id'] ?? ''); ?>', '<?php echo htmlspecialchars($ad['source'] ?? 'network'); ?>')">👁️ Preview</button>
-                                <button class="btn btn-success" onclick="simulateAdClick('<?php echo htmlspecialchars($ad['id'] ?? $ad['ad_id'] ?? ''); ?>', '<?php echo htmlspecialchars($ad['client_id'] ?? 'unknown'); ?>', <?php echo $ad['payout_amount'] ?? $ad['payout'] ?? 0.001; ?>)">🖱️ Test Click</button>
+                                <button class="btn btn-success" onclick="simulateAdClick('<?php echo htmlspecialchars($ad['id'] ?? $ad['ad_id'] ?? ''); ?>', '<?php echo htmlspecialchars($ad['client_id'] ?? 'unknown'); ?>', <?php 
+                                    // Use different payout rates based on ad source
+                                    $source = $ad['source'] ?? 'network';
+                                    if ($source === 'ads_storage') {
+                                        echo '0.0000009'; // Storage ads fixed rate
+                                    } else {
+                                        echo $ad['payout_amount'] ?? $ad['payout'] ?? '0.000005'; // Live ads negotiated rate
+                                    }
+                                ?>)">🖱️ Test Click</button>
                             </div>
                         </div>
                         <?php endforeach; ?>
@@ -2431,6 +3046,11 @@ if ($isLoggedIn) {
             setTimeout(function() {
                 loadLiveAds();
             }, 2000);
+            
+            // Update summary for initially loaded PHP ads
+            setTimeout(function() {
+                updateAdSourcesSummary();
+            }, 500);
             <?php endif; ?>
         });
         
@@ -2760,6 +3380,95 @@ if ($isLoggedIn) {
                 });
         }
         
+        // Function to update the ad sources summary
+        function updateAdSourcesSummary() {
+            var summaryDiv = document.getElementById('adSourcesSummary');
+            if (!summaryDiv || !liveAds || liveAds.length === 0) {
+                if (summaryDiv) summaryDiv.style.display = 'none';
+                return;
+            }
+            
+            // Count ads by source and type
+            var counts = {
+                live: 0,
+                storage: 0,
+                legacy: 0,
+                total: liveAds.length,
+                // Ad type breakdown
+                video: 0,
+                picture: 0,
+                text: 0,
+                svg: 0
+            };
+            
+            var totalPayout = 0;
+            
+            for (var i = 0; i < liveAds.length; i++) {
+                var ad = liveAds[i];
+                var source = ad.source || 'network';
+                var adType = ad.ad_type || 'svg';
+                var payout = 0;
+                
+                // Count by source
+                if (source === 'p2p_client') {
+                    counts.live++;
+                    payout = ad.payout_amount || ad.payout || 0.000005;
+                } else if (source === 'ads_storage') {
+                    counts.storage++;
+                    payout = 0.0000009;
+                } else {
+                    counts.legacy++;
+                    payout = ad.payout_amount || ad.payout || 0.000005;
+                }
+                
+                // Count by type
+                switch (adType) {
+                    case 'video':
+                        counts.video++;
+                        break;
+                    case 'picture':
+                        counts.picture++;
+                        break;
+                    case 'text':
+                        counts.text++;
+                        break;
+                    case 'svg':
+                    default:
+                        counts.svg++;
+                        break;
+                }
+                
+                totalPayout += payout;
+            }
+            
+            // Update counts in the UI
+            document.getElementById('liveCount').textContent = counts.live;
+            document.getElementById('storageCount').textContent = counts.storage;
+            document.getElementById('legacyCount').textContent = counts.legacy;
+            document.getElementById('totalCount').textContent = counts.total;
+            
+            // Calculate and display average payout
+            var avgPayout = counts.total > 0 ? (totalPayout / counts.total) : 0;
+            document.getElementById('avgPayout').textContent = 'Avg: ' + avgPayout.toFixed(9) + ' PYC/click';
+            
+            // Update ad type breakdown in the priority section
+            var prioritySection = summaryDiv.querySelector('div[style*="background: #f8f9fa"]');
+            if (prioritySection) {
+                var typeBreakdown = '';
+                if (counts.video > 0) typeBreakdown += counts.video + ' Video 🎬 ';
+                if (counts.picture > 0) typeBreakdown += counts.picture + ' Picture 🖼️ ';
+                if (counts.text > 0) typeBreakdown += counts.text + ' Text 📝 ';
+                if (counts.svg > 0) typeBreakdown += counts.svg + ' SVG 📺 ';
+                
+                prioritySection.innerHTML = 
+                    '<strong>Priority:</strong> Live P2P ads (highest payout) → Storage ads (reliable) → Legacy ads (fallback)<br>' +
+                    (typeBreakdown ? '<strong>Ad Types:</strong> ' + typeBreakdown.trim() : '');
+            }
+            
+            // Show the summary
+            summaryDiv.style.display = 'block';
+        }
+        
         function displayLiveAds() {
             var container = document.getElementById('adsList');
             
@@ -2778,10 +3487,27 @@ if ($isLoggedIn) {
                 var payout = ad.payout_amount || ad.payout || 0.001;
                 var source = ad.source || 'network';
                 
-                // Determine the preview URL based on source
+                // Determine the preview URL based on source and ad type
                 var previewUrl;
+                var adType = ad.ad_type || 'svg';
+                
                 if (source === 'ads_storage') {
-                    previewUrl = ad.html_url || ad.svg_url || ('?ajax=serve_ad_svg&ad_id=' + encodeURIComponent(adId));
+                    // For storage ads, use appropriate URL based on type
+                    switch (adType) {
+                        case 'video':
+                            previewUrl = ad.html_url || ('?ajax=serve_ad_video&ad_id=' + encodeURIComponent(adId));
+                            break;
+                        case 'picture':
+                            previewUrl = ad.html_url || ('?ajax=serve_ad_image&ad_id=' + encodeURIComponent(adId));
+                            break;
+                        case 'text':
+                            previewUrl = ad.html_url || ('?ajax=serve_ad_text&ad_id=' + encodeURIComponent(adId));
+                            break;
+                        case 'svg':
+                        default:
+                            previewUrl = ad.html_url || ad.svg_url || ('?ajax=serve_ad_svg&ad_id=' + encodeURIComponent(adId));
+                            break;
+                    }
                 } else {
                     var adHost = ad.client_host || 'secupgrade.com'; 
                     var adPort = ad.client_port || '8082';
@@ -2794,10 +3520,16 @@ if ($isLoggedIn) {
                 var adItem = document.createElement('div');
                 adItem.className = 'ad-item';
                 
-                // Create preview container
+                // Create preview container with ad type icon
                 var previewContainer = document.createElement('div');
                 previewContainer.className = 'ad-preview-container';
-                previewContainer.style.cssText = 'width: 120px; height: 90px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden;';
+                previewContainer.style.cssText = 'width: 120px; height: 90px; border: 1px solid #ddd; border-radius: 6px; overflow: hidden; position: relative;';
+                
+                // Add ad type icon overlay
+                var iconOverlay = document.createElement('div');
+                iconOverlay.style.cssText = 'position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.7); color: white; padding: 2px 6px; border-radius: 3px; font-size: 14px; z-index: 10;';
+                iconOverlay.textContent = adTypeIcon;
+                previewContainer.appendChild(iconOverlay);
                 
                 var iframe = document.createElement('iframe');
                 iframe.src = previewUrl;
@@ -2815,11 +3547,39 @@ if ($isLoggedIn) {
                     sourceBadge = '<span class="network-badge">NETWORK</span>';
                 }
                 
+                // Determine ad type icon and format info
+                var adTypeIcon = '';
                 var formatInfo = '';
-                if (ad.html_url) {
-                    formatInfo = ' | <strong>Format:</strong> HTML + SVG';
-                } else {
-                    formatInfo = ' | <strong>Format:</strong> SVG Only';
+                
+                switch (adType) {
+                    case 'video':
+                        adTypeIcon = '🎬';
+                        formatInfo = ' | <strong>Type:</strong> Video Ad 🎬';
+                        if (ad.html_url) formatInfo += ' + HTML Overlay';
+                        break;
+                    case 'picture':
+                        adTypeIcon = '🖼️';
+                        formatInfo = ' | <strong>Type:</strong> Picture Ad 🖼️';
+                        if (ad.html_url) formatInfo += ' + Text Overlay';
+                        break;
+                    case 'text':
+                        adTypeIcon = '📝';
+                        formatInfo = ' | <strong>Type:</strong> Text Ad 📝';
+                        if (ad.html_url) formatInfo += ' + HTML Styling';
+                        break;
+                    case 'svg':
+                    default:
+                        if (source === 'ads_storage') {
+                            adTypeIcon = '📂';
+                        } else {
+                            adTypeIcon = '📺';
+                        }
+                        if (ad.html_url) {
+                            formatInfo = ' | <strong>Type:</strong> SVG + HTML';
+                        } else {
+                            formatInfo = ' | <strong>Type:</strong> SVG Only';
+                        }
+                        break;
                 }
                 
                 contentDiv.innerHTML = 
@@ -2863,6 +3623,9 @@ if ($isLoggedIn) {
                 // Add to container
                 container.appendChild(adItem);
             }
+            
+            // Update the ad sources summary
+            updateAdSourcesSummary();
         }
         
         function scanForClients() {
@@ -3066,8 +3829,9 @@ if ($isLoggedIn) {
             var filename = config.pythonCoinAddress + '_adblock.js'; 
             
             var code = '';
-            code += '// PythonCoin P2P Ad Network - Enhanced Ad Block v2.2.0 (Storage + Network)\n';
-            code += '// Supports: ads_storage/active folder with SVG/HTML/JSON ad trios\n';
+            code += '// PythonCoin P2P Ad Network - Enhanced Ad Block v2.3.0 (Multi-Type Ad Support)\n';
+            code += '// Supports: Video ads (.mp4), Picture ads (.jpg/.png), Text ads (.txt), SVG ads (.svg)\n';
+            code += '// Storage: ads_storage/active folder with automatic ad type detection\n';
             code += '// Developer: ' + config.developer + '\n';
             code += '// PythonCoin Address: ' + config.pythonCoinAddress + '\n';
             code += '// Generated: ' + timestamp + '\n';
@@ -3170,10 +3934,25 @@ code += '        \n';
 code += '        var randomAd = PYC_AD_CONFIG.storageAdsLoaded[Math.floor(Math.random() * PYC_AD_CONFIG.storageAdsLoaded.length)];\n';
 code += '        PYC_AD_CONFIG.lastAdSource = "storage";\n';
 code += '        \n';
-code += '        console.log("Displaying storage ad (SVG only):", randomAd.id);\n';
+code += '        var adType = randomAd.ad_type || "svg";\n';
+code += '        console.log("Displaying storage ad (" + adType + "):", randomAd.id);\n';
 code += '        \n';
-code += '        // Always display as SVG - ignore HTML files\n';
-code += '        displaySvgAd(randomAd, {client_id: "storage"});\n';
+code += '        // Display ad based on type\n';
+code += '        switch (adType) {\n';
+code += '            case "video":\n';
+code += '                displayVideoAd(randomAd, {client_id: "storage"});\n';
+code += '                break;\n';
+code += '            case "picture":\n';
+code += '                displayPictureAd(randomAd, {client_id: "storage"});\n';
+code += '                break;\n';
+code += '            case "text":\n';
+code += '                displayTextAd(randomAd, {client_id: "storage"});\n';
+code += '                break;\n';
+code += '            case "svg":\n';
+code += '            default:\n';
+code += '                displaySvgAd(randomAd, {client_id: "storage"});\n';
+code += '                break;\n';
+code += '        }\n';
 code += '    }\n\n';
             
             code += '    function displayHtmlAd(ad) {\n';
@@ -3194,7 +3973,9 @@ code += '    }\n\n';
             code += '                    // Add click handler for the entire container\n';
             code += '                    PYC_AD_CONFIG.container.style.cursor = "pointer";\n';
             code += '                    PYC_AD_CONFIG.container.onclick = function() {\n';
-            code += '                        recordClick(ad.id, "storage", ad.payout_amount || 0.001);\n';
+            code += '                        // Storage ads get fixed lower payout rate of 0.0000009 PYC\n';
+            code += '                        var storagePayoutRate = 0.0000009;\n';
+            code += '                        recordClick(ad.id, "storage", storagePayoutRate);\n';
             code += '                        if (ad.target_url || ad.click_url) {\n';
             code += '                            window.open(ad.target_url || ad.click_url, "_blank");\n';
             code += '                        }\n';
@@ -3322,11 +4103,169 @@ code += '    }\n\n';
             code += '        recordView(ad, client);\n';
             code += '    }\n\n';
             
+            code += '    function displayVideoAd(ad, client) {\n';
+            code += '        console.log("Loading video ad:", ad.id);\n';
+            code += '        \n';
+            code += '        var videoUrl;\n';
+            code += '        if (client.client_id === "storage") {\n';
+            code += '            videoUrl = ad.video_url;\n';
+            code += '        } else {\n';
+            code += '            videoUrl = PYC_AD_CONFIG.centralServer + "?ajax=proxy_video&client_host=" + encodeURIComponent(client.host || "127.0.0.1") + "&client_port=" + encodeURIComponent(client.port || "8082") + "&ad_id=" + encodeURIComponent(ad.id || ad.ad_id || "unknown");\n';
+            code += '        }\n';
+            code += '        \n';
+            code += '        var video = document.createElement("video");\n';
+            code += '        video.style.cssText = "width: 100%; height: 100%; object-fit: cover;";\n';
+            code += '        video.src = videoUrl;\n';
+            code += '        video.autoplay = true;\n';
+            code += '        video.muted = true;\n';
+            code += '        video.loop = true;\n';
+            code += '        video.controls = false;\n';
+            code += '        \n';
+            code += '        // Add text overlay if HTML is available\n';
+            code += '        if (ad.html_url) {\n';
+            code += '            fetch(ad.html_url)\n';
+            code += '                .then(function(response) { return response.text(); })\n';
+            code += '                .then(function(htmlContent) {\n';
+            code += '                    var overlay = document.createElement("div");\n';
+            code += '                    overlay.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10;";\n';
+            code += '                    overlay.innerHTML = htmlContent;\n';
+            code += '                    \n';
+            code += '                    PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                    PYC_AD_CONFIG.container.style.position = "relative";\n';
+            code += '                    PYC_AD_CONFIG.container.appendChild(video);\n';
+            code += '                    PYC_AD_CONFIG.container.appendChild(overlay);\n';
+            code += '                    addClickHandler(ad, client);\n';
+            code += '                })\n';
+            code += '                .catch(function(error) {\n';
+            code += '                    console.warn("Video overlay loading failed:", error);\n';
+            code += '                    PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                    PYC_AD_CONFIG.container.appendChild(video);\n';
+            code += '                    addClickHandler(ad, client);\n';
+            code += '                });\n';
+            code += '        } else {\n';
+            code += '            PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '            PYC_AD_CONFIG.container.appendChild(video);\n';
+            code += '            addClickHandler(ad, client);\n';
+            code += '        }\n';
+            code += '        \n';
+            code += '        recordView(ad, client);\n';
+            code += '    }\n\n';
+            
+            code += '    function displayPictureAd(ad, client) {\n';
+            code += '        console.log("Loading picture ad:", ad.id);\n';
+            code += '        \n';
+            code += '        var imageUrl;\n';
+            code += '        if (client.client_id === "storage") {\n';
+            code += '            imageUrl = ad.image_url;\n';
+            code += '        } else {\n';
+            code += '            imageUrl = PYC_AD_CONFIG.centralServer + "?ajax=proxy_image&client_host=" + encodeURIComponent(client.host || "127.0.0.1") + "&client_port=" + encodeURIComponent(client.port || "8082") + "&ad_id=" + encodeURIComponent(ad.id || ad.ad_id || "unknown");\n';
+            code += '        }\n';
+            code += '        \n';
+            code += '        var img = document.createElement("img");\n';
+            code += '        img.style.cssText = "width: 100%; height: 100%; object-fit: cover;";\n';
+            code += '        img.src = imageUrl;\n';
+            code += '        \n';
+            code += '        img.onload = function() {\n';
+            code += '            // Add text overlay if HTML is available\n';
+            code += '            if (ad.html_url) {\n';
+            code += '                fetch(ad.html_url)\n';
+            code += '                    .then(function(response) { return response.text(); })\n';
+            code += '                    .then(function(htmlContent) {\n';
+            code += '                        var overlay = document.createElement("div");\n';
+            code += '                        overlay.style.cssText = "position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; z-index: 10;";\n';
+            code += '                        overlay.innerHTML = htmlContent;\n';
+            code += '                        \n';
+            code += '                        PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                        PYC_AD_CONFIG.container.style.position = "relative";\n';
+            code += '                        PYC_AD_CONFIG.container.appendChild(img);\n';
+            code += '                        PYC_AD_CONFIG.container.appendChild(overlay);\n';
+            code += '                        addClickHandler(ad, client);\n';
+            code += '                    })\n';
+            code += '                    .catch(function(error) {\n';
+            code += '                        console.warn("Picture overlay loading failed:", error);\n';
+            code += '                        PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                        PYC_AD_CONFIG.container.appendChild(img);\n';
+            code += '                        addClickHandler(ad, client);\n';
+            code += '                    });\n';
+            code += '            } else {\n';
+            code += '                PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                PYC_AD_CONFIG.container.appendChild(img);\n';
+            code += '                addClickHandler(ad, client);\n';
+            code += '            }\n';
+            code += '        };\n';
+            code += '        \n';
+            code += '        img.onerror = function() {\n';
+            code += '            showFallbackAd("Image Load Error");\n';
+            code += '        };\n';
+            code += '        \n';
+            code += '        recordView(ad, client);\n';
+            code += '    }\n\n';
+            
+            code += '    function displayTextAd(ad, client) {\n';
+            code += '        console.log("Loading text ad:", ad.id);\n';
+            code += '        \n';
+            code += '        var textUrl;\n';
+            code += '        if (client.client_id === "storage") {\n';
+            code += '            textUrl = ad.text_url;\n';
+            code += '        } else {\n';
+            code += '            textUrl = PYC_AD_CONFIG.centralServer + "?ajax=proxy_text&client_host=" + encodeURIComponent(client.host || "127.0.0.1") + "&client_port=" + encodeURIComponent(client.port || "8082") + "&ad_id=" + encodeURIComponent(ad.id || ad.ad_id || "unknown");\n';
+            code += '        }\n';
+            code += '        \n';
+            code += '        fetch(textUrl)\n';
+            code += '            .then(function(response) { return response.text(); })\n';
+            code += '            .then(function(textContent) {\n';
+            code += '                if (textContent) {\n';
+            code += '                    if (ad.html_url) {\n';
+            code += '                        // Use HTML styling if available\n';
+            code += '                        fetch(ad.html_url)\n';
+            code += '                            .then(function(response) { return response.text(); })\n';
+            code += '                            .then(function(htmlContent) {\n';
+            code += '                                // Replace placeholder in HTML with text content\n';
+            code += '                                var styledContent = htmlContent.replace(/\\{\\{text\\}\\}/g, textContent);\n';
+            code += '                                var iframe = document.createElement("iframe");\n';
+            code += '                                iframe.style.cssText = "width: 100%; height: 100%; border: none;";\n';
+            code += '                                iframe.srcdoc = styledContent;\n';
+            code += '                                \n';
+            code += '                                PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '                                PYC_AD_CONFIG.container.appendChild(iframe);\n';
+            code += '                                addClickHandler(ad, client);\n';
+            code += '                            })\n';
+            code += '                            .catch(function(error) {\n';
+            code += '                                console.warn("Text styling failed:", error);\n';
+            code += '                                displayPlainTextAd(textContent, ad, client);\n';
+            code += '                            });\n';
+            code += '                    } else {\n';
+            code += '                        displayPlainTextAd(textContent, ad, client);\n';
+            code += '                    }\n';
+            code += '                } else {\n';
+            code += '                    showFallbackAd("Empty Text Content");\n';
+            code += '                }\n';
+            code += '            })\n';
+            code += '            .catch(function(error) {\n';
+            code += '                console.error("Text loading error:", error);\n';
+            code += '                showFallbackAd("Text Load Error");\n';
+            code += '            });\n';
+            code += '        \n';
+            code += '        recordView(ad, client);\n';
+            code += '    }\n\n';
+            
+            code += '    function displayPlainTextAd(textContent, ad, client) {\n';
+            code += '        var textDiv = document.createElement("div");\n';
+            code += '        textDiv.style.cssText = "padding: 20px; text-align: center; font-family: Arial, sans-serif; font-size: 16px; color: #333; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); height: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: center;";\n';
+            code += '        textDiv.textContent = textContent;\n';
+            code += '        \n';
+            code += '        PYC_AD_CONFIG.container.innerHTML = "";\n';
+            code += '        PYC_AD_CONFIG.container.appendChild(textDiv);\n';
+            code += '        addClickHandler(ad, client);\n';
+            code += '    }\n\n';
+            
             code += '    function addClickHandler(ad, client) {\n';
             code += '        if (!PYC_AD_CONFIG.container) return;\n';
             code += '        PYC_AD_CONFIG.container.style.cursor = "pointer";\n';
             code += '        PYC_AD_CONFIG.container.onclick = function() {\n';
-            code += '            recordClick(ad.id || ad.ad_id, client.client_id, ad.payout_amount || ad.payout || 0.001);\n';
+            code += '            // Live ads use negotiated rate (default 0.000005 PYC if not specified)\n';
+            code += '            var livePayoutRate = ad.payout_amount || ad.payout || 0.000005;\n';
+            code += '            recordClick(ad.id || ad.ad_id, client.client_id, livePayoutRate);\n';
             code += '            if (ad.target_url || ad.click_url) {\n';
             code += '                window.open(ad.target_url || ad.click_url, "_blank");\n';
             code += '            }\n';
